@@ -1,0 +1,1070 @@
+import React, { useState, useRef, useEffect, useMemo } from 'react';
+import { 
+  Mic, ChevronRight, ChevronLeft, Car, CheckCircle2, Activity, 
+  Sun, Moon, Upload, Download, Database, Plus, BarChart2, CheckSquare, Square, Armchair, Wind, Zap,
+  X, Edit3, Save, MessageSquare, Sparkles, Loader2, Key
+} from 'lucide-react';
+
+// --- 数据结构定义 (严格对齐 Car_Database.csv) ---
+const EVALUATION_STAGES = [
+  { id: 'setup', title: '试驾初始化', icon: <Car className="w-6 h-6" /> },
+  {
+    id: 'static', title: '静态表现', icon: <Armchair className="w-6 h-6" />,
+    items: [
+      { id: 'static_vision', label: '视野', leftAnchor: '压抑/盲区大', rightAnchor: '开阔无死角', csvKey: '静态-视野(1-5)' },
+      { id: 'static_ergonomics', label: '坐姿与人机', leftAnchor: '别扭/难适应', rightAnchor: '自然/贴合', csvKey: '静态-坐姿与人机(1-5)' },
+      { id: 'static_seat', label: '座椅舒适度', leftAnchor: '单薄/支撑差', rightAnchor: '包裹/支撑极佳', csvKey: '静态-座椅舒适度(1-5)' },
+      { id: 'static_nvh', label: '静止NVH', leftAnchor: '吵闹/震动大', rightAnchor: '如图书馆', csvKey: '静态-静止NVH(1-5)' }
+    ],
+    memoKey: '静态-主观评价'
+  },
+  {
+    id: 'city', title: '城市工况', icon: <Activity className="w-6 h-6" />,
+    items: [
+      { id: 'city_suspension', label: '悬挂舒适与过滤', leftAnchor: '生硬颠簸', rightAnchor: '如履平地', csvKey: '城市-悬挂舒适与过滤(1-5)' },
+      { id: 'city_brake', label: '刹车线性度', leftAnchor: '突兀/点头', rightAnchor: '极度跟脚', csvKey: '城市-刹车线性(1-5)' },
+      { id: 'city_steering', label: '方向轻重与回正', leftAnchor: '滞涩/死板', rightAnchor: '顺滑自然', csvKey: '城市-方向轻重与回正(1-5)' },
+      { id: 'city_throttle', label: '动力跟脚性', leftAnchor: '迟滞/窜车', rightAnchor: '随叫随到', csvKey: '城市-动力跟脚性(1-5)' }
+    ],
+    memoKey: '城市-主观评价'
+  },
+  {
+    id: 'highway', title: '高速工况', icon: <Wind className="w-6 h-6" />,
+    items: [
+      { id: 'hwy_stability', label: '直线稳定性', leftAnchor: '发飘/需微调', rightAnchor: '稳如高铁', csvKey: '高速-直线稳定性(1-5)' },
+      { id: 'hwy_handling', label: '变线支撑', leftAnchor: '侧倾大/拖沓', rightAnchor: '干脆利落', csvKey: '高速-变线支撑(1-5)' },
+      { id: 'hwy_nvh', label: 'NVH整体感受', leftAnchor: '吵闹刺耳', rightAnchor: '极度静谧', csvKey: '高速-NVH整体感受(1-5)' },
+      { id: 'hwy_brake', label: '制动稳定性', leftAnchor: '晃动/没信心', rightAnchor: '安稳扎实', csvKey: '高速-制动稳定性(1-5)' }
+    ],
+    memoKey: '高速-主观评价'
+  },
+  {
+    id: 'powertrain', title: '动力总成', icon: <Zap className="w-6 h-6" />,
+    items: [
+      { id: 'pt_response', label: '油门响应', leftAnchor: '迟钝/不听话', rightAnchor: '意图秒懂', csvKey: '动总-油门响应(1-5)' },
+      { id: 'pt_logic', label: '变速箱/电控逻辑', leftAnchor: '顿挫/傻等', rightAnchor: '丝滑聪明', csvKey: '动总-变速箱/电控逻辑(1-5)' },
+      { id: 'pt_smoothness', label: '动力平顺性', leftAnchor: '拉扯/突兀', rightAnchor: '如丝般顺滑', csvKey: '动总-动力平顺性(1-5)' },
+      { id: 'pt_sound', label: '声音品质', leftAnchor: '干瘪/嘈杂', rightAnchor: '浑厚/悦耳', csvKey: '动总-声音品质(1-5)' }
+    ],
+    memoKey: '动总-主观评价'
+  },
+  {
+    id: 'chassis', title: '底盘动态', icon: <Activity className="w-6 h-6" />,
+    items: [
+      { id: 'chassis_balance', label: '前后悬平衡', leftAnchor: '严重脱节', rightAnchor: '浑然一体', csvKey: '底盘-前后悬平衡(1-5)' },
+      { id: 'chassis_roll', label: '侧倾控制', leftAnchor: '左摇右晃', rightAnchor: '稳如泰山', csvKey: '底盘-侧倾控制(1-5)' },
+      { id: 'chassis_rigidity', label: '车身整体感', leftAnchor: '松散异响', rightAnchor: '坚如磐石', csvKey: '底盘-车身整体感(1-5)' },
+      { id: 'chassis_precision', label: '转向指向感', leftAnchor: '模糊虚位', rightAnchor: '指哪打哪', csvKey: '底盘-转向指向感(1-5)' }
+    ],
+    memoKey: '底盘-主观评价'
+  },
+  { id: 'summary', title: '数据汇总', icon: <CheckCircle2 className="w-6 h-6" /> }
+];
+
+const SEGMENT_OPTIONS = [
+  '微型车', '小型车', '紧凑型车', '中型车', '中大型车', '大型车',
+  '小型SUV', '紧凑型SUV', '中型SUV', '中大型SUV', '大型SUV', 
+  'MPV', '跑车', '皮卡', '微面'
+];
+
+// --- 基础工具函数 ---
+const parseCSV = (str) => {
+  const rows = [];
+  let row = [];
+  let inQuotes = false;
+  let val = '';
+  for (let i = 0; i < str.length; i++) {
+    let char = str[i];
+    if (char === '"') { inQuotes = !inQuotes; } 
+    else if (char === ',' && !inQuotes) { row.push(val.trim()); val = ''; } 
+    else if ((char === '\n' || char === '\r') && !inQuotes) {
+      if (char === '\r' && str[i+1] === '\n') i++; 
+      row.push(val.trim());
+      if (row.some(v => v !== '')) rows.push(row); 
+      row = [];
+      val = '';
+    } 
+    else { val += char; }
+  }
+  if (val || row.length > 0) { row.push(val.trim()); rows.push(row); }
+  
+  if (rows.length < 2) return { headers: [], data: [] };
+  const headers = rows[0];
+  const data = rows.slice(1).map(r => {
+    const obj = {};
+    headers.forEach((h, i) => obj[h] = r[i] || '');
+    return obj;
+  });
+  return { headers, data };
+};
+
+const getRadarDataAverages = (scoresObj) => {
+  const radarData = {};
+  EVALUATION_STAGES.forEach(stage => {
+    if (stage.items) {
+      const sum = stage.items.reduce((acc, item) => acc + (scoresObj[item.id] || 50), 0);
+      radarData[stage.title] = sum / stage.items.length;
+    }
+  });
+  return radarData;
+};
+
+const getRadarDataFromCSVRow = (row) => {
+  const radarData = {};
+  EVALUATION_STAGES.forEach(stage => {
+    if (stage.items) {
+      let sum = 0;
+      let validCount = 0;
+      stage.items.forEach(item => {
+        let val = Number(row[item.csvKey]);
+        if (!isNaN(val) && val > 0) {
+          sum += (val - 1) * 25; 
+          validCount++;
+        }
+      });
+      radarData[stage.title] = validCount > 0 ? sum / validCount : 50;
+    }
+  });
+  return radarData;
+};
+
+const getDimColorInfo = (dimName) => {
+  if (dimName.includes('静态')) return { bg: 'rgba(59, 130, 246, 0.08)', text: '#3b82f6' };
+  if (dimName.includes('城市')) return { bg: 'rgba(16, 185, 129, 0.08)', text: '#10b981' };
+  if (dimName.includes('高速')) return { bg: 'rgba(168, 85, 247, 0.08)', text: '#a855f7' };
+  if (dimName.includes('动总')) return { bg: 'rgba(244, 63, 94, 0.08)', text: '#f43f5e' };
+  if (dimName.includes('底盘')) return { bg: 'rgba(245, 158, 11, 0.08)', text: '#f59e0b' };
+  return { bg: 'transparent', text: 'var(--text-muted)' };
+};
+
+// --- 获奖级交互组件：Apple 风格流体滑块 ---
+const FluidSlider = ({ label, value, onChange, leftAnchor, rightAnchor }) => {
+  const containerRef = useRef(null);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const updateVal = (e) => {
+    if (!containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    onChange(Math.round(ratio * 100));
+  };
+
+  const handlePointerDown = (e) => {
+    setIsDragging(true);
+    updateVal(e);
+    if (navigator.vibrate) navigator.vibrate(10);
+  };
+
+  useEffect(() => {
+    const handlePointerMove = (e) => { if (isDragging) updateVal(e); };
+    const handlePointerUp = () => setIsDragging(false);
+    if (isDragging) {
+      window.addEventListener('pointermove', handlePointerMove);
+      window.addEventListener('pointerup', handlePointerUp);
+    }
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+    };
+  }, [isDragging]);
+
+  return (
+    <div className="mb-8 select-none touch-none">
+      <div className="flex justify-between items-end mb-3">
+        <span className="text-[var(--text-main)] font-medium text-lg tracking-wide">{label}</span>
+        <span className="text-[var(--apple-yellow)] font-bold text-xl font-mono">{value}</span>
+      </div>
+      <div 
+        ref={containerRef} onPointerDown={handlePointerDown}
+        className={`relative h-16 rounded-2xl bg-[var(--track-bg)] backdrop-blur-md overflow-hidden cursor-pointer transition-transform duration-300 ${isDragging ? 'scale-[0.98]' : 'scale-100'}`}
+      >
+        <div className="absolute top-0 left-0 h-full bg-[var(--apple-yellow)] transition-all duration-150 ease-out" style={{ width: `${value}%` }} />
+        <div className="absolute inset-0 bg-gradient-to-b from-[var(--text-main)]/10 to-transparent pointer-events-none mix-blend-overlay" />
+      </div>
+      <div className="flex justify-between mt-2 px-1 text-xs text-[var(--text-muted)] font-medium uppercase tracking-wider">
+        <span>{leftAnchor}</span><span>{rightAnchor}</span>
+      </div>
+    </div>
+  );
+};
+
+// --- 原生 SVG 雷达图组件 ---
+const RadarChart = ({ data, size = 300, color = "var(--apple-yellow)", showLabels = true }) => {
+  const center = size / 2;
+  const radius = showLabels ? (size / 2) * 0.75 : (size / 2) * 0.9; 
+  const keys = Object.keys(data);
+  const points = keys.length;
+  if (points === 0) return null;
+
+  const getCoord = (value, index) => {
+    const angle = index * ((Math.PI * 2) / points) - Math.PI / 2; 
+    const r = radius * (value / 100);
+    return { x: center + r * Math.cos(angle), y: center + r * Math.sin(angle) };
+  };
+
+  const polygonPoints = Object.values(data).map((val, i) => {
+    const { x, y } = getCoord(val, i);
+    return `${x},${y}`;
+  }).join(' ');
+
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+      {[100, 75, 50, 25].map(ringVal => (
+        <circle key={ringVal} cx={center} cy={center} r={radius * (ringVal / 100)} fill="none" stroke="var(--radar-grid)" strokeWidth="1" />
+      ))}
+      {keys.map((key, i) => {
+        const end = getCoord(100, i);
+        const labelPos = getCoord(125, i);
+        return (
+          <g key={key}>
+            <line x1={center} y1={center} x2={end.x} y2={end.y} stroke="var(--glass-border)" strokeWidth="1" />
+            {showLabels && (
+              <text x={labelPos.x} y={labelPos.y} fill="var(--text-muted)" fontSize={size * 0.035} textAnchor="middle" alignmentBaseline="middle">
+                {key}
+              </text>
+            )}
+          </g>
+        );
+      })}
+      <polygon points={polygonPoints} fill={color} fillOpacity="0.2" stroke={color} strokeWidth="2" className="transition-all duration-700" />
+      <circle cx={center} cy={center} r="3" fill={color} />
+    </svg>
+  );
+};
+
+// --- 主应用 ---
+export default function App() {
+  const [appMode, setAppMode] = useState('home'); 
+  const [isDarkMode, setIsDarkMode] = useState(true);
+  
+  // 数据库状态
+  const [csvTemplate, setCsvTemplate] = useState({ raw: '', headers: [], data: [] });
+  const fileInputRef = useRef(null);
+
+  // API 凭证状态 (使用 localStorage 本地保存，兼容通用大模型)
+  const [apiConfig, setApiConfig] = useState(() => {
+    const stored = localStorage.getItem('llmApiConfig');
+    // 默认提供一个 OpenAI 格式的常见结构
+    return stored ? JSON.parse(stored) : { url: 'https://api.openai.com/v1/chat/completions', key: '', model: 'gpt-3.5-turbo' };
+  });
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [tempApiConfig, setTempApiConfig] = useState(apiConfig);
+
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target.result;
+      const { headers, data } = parseCSV(text);
+      setCsvTemplate({ raw: text, headers, data });
+      if (navigator.vibrate) navigator.vibrate([20, 50, 20]);
+    };
+    reader.readAsText(file);
+  };
+
+  // ----------------- 录入模块状态 -----------------
+  const [currentStep, setCurrentStep] = useState(0);
+  const [vehicleInfo, setVehicleInfo] = useState({ 
+    brand: '极氪', segment: '中型SUV', year: '2024', model: '007 GT',
+    length: '', width: '', height: '', wheelbase: '', weight: '', battery: '', range: '', engine: '', motor: ''
+  });
+  
+  const [scores, setScores] = useState({ 
+    static_vision: 50, static_ergonomics: 50, static_seat: 50, static_nvh: 50,
+    city_suspension: 50, city_brake: 50, city_steering: 50, city_throttle: 50, 
+    hwy_stability: 50, hwy_handling: 50, hwy_nvh: 50, hwy_brake: 50,
+    pt_response: 50, pt_logic: 50, pt_smoothness: 50, pt_sound: 50,
+    chassis_balance: 50, chassis_roll: 50, chassis_rigidity: 50, chassis_precision: 50 
+  });
+  
+  const [memos, setMemos] = useState({ static: '', city: '', highway: '', powertrain: '', chassis: '' });
+  const [activeRecordStage, setActiveRecordStage] = useState(null);
+
+  // --- 大模型 API 接入模块 ---
+  const [isFetchingAI, setIsFetchingAI] = useState(false);
+  const [showAIModal, setShowAIModal] = useState(false);
+  const [aiData, setAiData] = useState({});
+  const [aiErrorMsg, setAiErrorMsg] = useState('');
+
+  const fetchAIVehicleData = async () => {
+    if (!apiConfig.key || !apiConfig.url) {
+      setAiErrorMsg("请先点击右上角配置大模型 API 信息！");
+      setTimeout(() => setAiErrorMsg(''), 3000);
+      return;
+    }
+    
+    if (!vehicleInfo.brand || !vehicleInfo.model) {
+      setAiErrorMsg("请先填写品牌和具体车型！");
+      setTimeout(() => setAiErrorMsg(''), 3000);
+      return;
+    }
+    setIsFetchingAI(true);
+    setAiErrorMsg('');
+    
+    const prompt = `你是一个汽车参数数据库专家。请检索 ${vehicleInfo.year || ''}款 ${vehicleInfo.brand} ${vehicleInfo.model} 的官方技术参数。若找不到特定款，请基于车系最新款估算。如果找不到确切值，请保持空字符串。
+请严格输出一个包含以下键值的 JSON 对象（全为字符串类型）：
+{"length": "长(mm)", "width": "宽(mm)", "height": "高(mm)", "wheelbase": "轴距(mm)", "weight": "整备质量(kg)", "battery": "电池容量(kWh)", "range": "CLTC续航(km)", "engine": "发动机排量与参数", "motor": "电机布局与功率"}
+不要输出任何 Markdown 标记（如 \`\`\`json），只输出纯 JSON 字符串。`;
+    
+    try {
+      let response;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        response = await fetch(apiConfig.url, {
+          method: "POST",
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiConfig.key}`
+          },
+          body: JSON.stringify({
+            model: apiConfig.model,
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0.1
+          })
+        });
+        if (response.ok) break;
+        await new Promise(r => setTimeout(r, 1500));
+      }
+
+      if (!response || !response.ok) throw new Error("获取大模型数据失败，可能是API密钥/地址错误或超出配额。");
+      
+      const result = await response.json();
+      const rawText = result.choices?.[0]?.message?.content;
+      if (!rawText) throw new Error("大模型返回空数据");
+      
+      // 清理可能存在的 Markdown 格式
+      const parsed = JSON.parse(rawText.replace(/```json/g, '').replace(/```/g, '').trim());
+      setAiData(parsed);
+      setShowAIModal(true);
+      if (navigator.vibrate) navigator.vibrate([10, 30, 10, 30]);
+
+    } catch (err) {
+      console.error(err);
+      setAiErrorMsg("AI获取失败，请检查API配置或网络连接。");
+      setTimeout(() => setAiErrorMsg(''), 3000);
+    } finally {
+      setIsFetchingAI(false);
+    }
+  };
+
+  const confirmAiData = () => {
+    setVehicleInfo(prev => ({ ...prev, ...aiData }));
+    setShowAIModal(false);
+    if (navigator.vibrate) navigator.vibrate(20);
+  };
+
+
+  const toggleRecord = (stageId) => {
+    if (activeRecordStage === stageId) {
+      setActiveRecordStage(null);
+      setMemos(p => ({ ...p, [stageId]: (p[stageId] || '').replace("正在录音...", "录音结束。") }));
+    } else {
+      if (activeRecordStage) {
+          setMemos(p => ({ ...p, [activeRecordStage]: (p[activeRecordStage] || '').replace("正在录音...", "录音结束。") }));
+      }
+      setActiveRecordStage(stageId);
+      setMemos(p => ({ ...p, [stageId]: (p[stageId] || '') + (p[stageId] ? " " : "") + "正在录音..." }));
+    }
+    if (navigator.vibrate) navigator.vibrate([15, 30, 15]);
+  };
+
+  const generateAndDownloadCSV = () => {
+    let outputCsv = "";
+    if (csvTemplate.headers.length === 0) {
+      const headers = ['厂牌', '年款', '车型', '级别', '车长(mm)', '车宽(mm)', '车高(mm)', '轴距(mm)', '整备质量(kg)', '电池容量(kWh)', 'CLTC续航', '发动机参数', '电机参数'];
+      const row = [ 
+        vehicleInfo.brand, vehicleInfo.year, vehicleInfo.model, vehicleInfo.segment,
+        vehicleInfo.length, vehicleInfo.width, vehicleInfo.height, vehicleInfo.wheelbase, vehicleInfo.weight,
+        vehicleInfo.battery, vehicleInfo.range, vehicleInfo.engine, vehicleInfo.motor
+      ];
+      
+      EVALUATION_STAGES.forEach(stage => {
+        if (stage.items) {
+          stage.items.forEach(item => { headers.push(item.csvKey); row.push((scores[item.id] / 25) + 1); });
+          headers.push(stage.memoKey); row.push(memos[stage.id] || '');
+        }
+      });
+      outputCsv = headers.join(',') + '\n' + row.join(',') + '\n';
+    } else {
+      const headers = csvTemplate.headers;
+      const newRow = new Array(headers.length).fill('');
+      const setVal = (h, v) => { const idx = headers.indexOf(h); if (idx !== -1) newRow[idx] = v; };
+      
+      setVal('厂牌', vehicleInfo.brand); setVal('年款', vehicleInfo.year); setVal('车型', vehicleInfo.model); setVal('级别', vehicleInfo.segment);
+      setVal('车长(mm)', vehicleInfo.length); setVal('车宽(mm)', vehicleInfo.width); setVal('车高(mm)', vehicleInfo.height); setVal('轴距(mm)', vehicleInfo.wheelbase);
+      setVal('整备质量(kg)', vehicleInfo.weight); setVal('电池容量(kWh)', vehicleInfo.battery); setVal('CLTC续航', vehicleInfo.range);
+      setVal('发动机参数', vehicleInfo.engine); setVal('电机参数', vehicleInfo.motor);
+      
+      EVALUATION_STAGES.forEach(stage => {
+        if (stage.items) {
+          let stageSum = 0;
+          stage.items.forEach(item => {
+            const score1to5 = (scores[item.id] / 25) + 1;
+            setVal(item.csvKey, score1to5);
+            stageSum += score1to5;
+          });
+          setVal(stage.memoKey, memos[stage.id] || '');
+          const summaryKey = stage.items[0].csvKey.split('-')[0] + '-综合评分(自动)';
+          setVal(summaryKey, (stageSum / stage.items.length).toFixed(2));
+        }
+      });
+      
+      outputCsv = csvTemplate.raw.trim() + '\n' + newRow.map(v => typeof v === 'string' && v.includes(',') ? `"${v}"` : v).join(',') + '\n';
+    }
+    const blob = new Blob([outputCsv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url; link.download = `${vehicleInfo.brand}_${vehicleInfo.model}_数据库更新.csv`;
+    document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    if (navigator.vibrate) navigator.vibrate([30, 50, 30]);
+  };
+
+  // ----------------- 查看模块状态 -----------------
+  const [selectedCars, setSelectedCars] = useState([]); 
+  const [isComparing, setIsComparing] = useState(false);
+  const [editingCarIndex, setEditingCarIndex] = useState(null);
+  const [editingData, setEditingData] = useState({});
+
+  const topCarsBySegment = useMemo(() => {
+    if (!csvTemplate.data.length) return [];
+    const grouped = {};
+    csvTemplate.data.forEach((row, idx) => {
+      const seg = row['级别'] || '未知级别';
+      let totalScore = 0;
+      let validItems = 0;
+      EVALUATION_STAGES.forEach(stage => {
+        if (stage.items) {
+          stage.items.forEach(item => {
+            const v = Number(row[item.csvKey]);
+            if (!isNaN(v) && v > 0) { totalScore += v; validItems++; }
+          });
+        }
+      });
+      if (validItems > 0) {
+        if (!grouped[seg] || grouped[seg].score < totalScore) {
+          grouped[seg] = { idx, row, score: totalScore, radarData: getRadarDataFromCSVRow(row) };
+        }
+      }
+    });
+    return Object.entries(grouped).map(([segment, data]) => ({ segment, ...data }));
+  }, [csvTemplate.data]);
+
+  const compareDimensions = useMemo(() => {
+    let dims = [];
+    EVALUATION_STAGES.forEach(stage => {
+      if (stage.items) dims.push(...stage.items.map(i => i.csvKey));
+    });
+    return dims;
+  }, []);
+
+  const processedColumns = useMemo(() => {
+    if (!csvTemplate.headers.length) return [];
+    const filteredHeaders = csvTemplate.headers.filter(h => !h.includes('主观评价'));
+
+    const COLUMN_CATEGORIES = [
+      { prefix: '静态', label: '静态表现', bg: 'rgba(59, 130, 246, 0.08)', text: '#3b82f6' },
+      { prefix: '城市', label: '城市工况', bg: 'rgba(16, 185, 129, 0.08)', text: '#10b981' },
+      { prefix: '高速', label: '高速工况', bg: 'rgba(168, 85, 247, 0.08)', text: '#a855f7' },
+      { prefix: '动总', label: '动力总成', bg: 'rgba(244, 63, 94, 0.08)', text: '#f43f5e' },
+      { prefix: '底盘', label: '底盘动态', bg: 'rgba(245, 158, 11, 0.08)', text: '#f59e0b' },
+    ];
+
+    const groups = [{ prefix: '基础', label: '基础信息', bg: 'transparent', text: 'var(--text-muted)', headers: [] }];
+    COLUMN_CATEGORIES.forEach(c => groups.push({ ...c, headers: [] }));
+
+    filteredHeaders.forEach(h => {
+       const prefix = h.split('-')[0];
+       const group = groups.find(g => g.prefix === prefix);
+       if (group) {
+           group.headers.push(h);
+       } else {
+           groups[0].headers.push(h); 
+       }
+    });
+
+    return groups.filter(g => g.headers.length > 0);
+  }, [csvTemplate.headers]);
+
+  // ----------------- UI 渲染 -----------------
+  return (
+    <div className="min-h-screen bg-[var(--bg-main)] text-[var(--text-main)] font-sans overflow-x-hidden fixed inset-0 selection:bg-[var(--apple-yellow)]/30 transition-colors duration-500 flex flex-col">
+      
+      <style dangerouslySetInnerHTML={{__html: `
+        :root {
+          --apple-yellow: ${isDarkMode ? '#FFD60A' : '#FF9F0A'};
+          --bg-main: ${isDarkMode ? '#000000' : '#F2F2F7'};
+          --text-main: ${isDarkMode ? '#FFFFFF' : '#000000'};
+          --text-muted: ${isDarkMode ? 'rgba(255, 255, 255, 0.5)' : 'rgba(0, 0, 0, 0.4)'};
+          --glass-bg: ${isDarkMode ? 'rgba(28, 28, 30, 0.65)' : 'rgba(255, 255, 255, 0.65)'};
+          --glass-border: ${isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)'};
+          --panel-bg: ${isDarkMode ? 'rgba(28, 28, 30, 0.95)' : 'rgba(255, 255, 255, 0.95)'};
+          --track-bg: ${isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.08)'};
+          --radar-grid: ${isDarkMode ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'};
+        }
+        .glass-panel { background-color: var(--glass-bg); backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px); }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        select { -webkit-appearance: none; -moz-appearance: none; appearance: none; }
+        
+        .apple-table { border-collapse: collapse; }
+        .apple-table th { background: var(--panel-bg); position: sticky; top: 0; z-index: 10; backdrop-filter: blur(10px); }
+        .apple-table td, .apple-table th { border-bottom: 1px solid var(--glass-border); white-space: nowrap; padding: 12px 16px; font-size: 13px; }
+        
+        .compare-table-container { height: 100%; overflow: auto; border-radius: 1.5rem; border: 1px solid var(--glass-border); background: var(--bg-main); }
+        .compare-table { border-collapse: separate; border-spacing: 0; width: 100%; text-align: left; }
+        .compare-table th, .compare-table td { padding: 16px; border-bottom: 1px solid var(--glass-border); border-right: 1px solid var(--glass-border); background: var(--bg-main); }
+        .compare-table .sticky-top-left { position: sticky; top: 0; left: 0; z-index: 30; background: var(--panel-bg); backdrop-filter: blur(20px); }
+        .compare-table .sticky-top { position: sticky; top: 0; z-index: 20; background: var(--panel-bg); backdrop-filter: blur(20px); }
+        .compare-table .sticky-left { position: sticky; left: 0; z-index: 10; background: var(--panel-bg); backdrop-filter: blur(20px); }
+      `}} />
+
+      <header className="absolute top-0 w-full z-50 glass-panel border-b border-[var(--glass-border)] pt-12 pb-4 px-6 flex items-center justify-between">
+        <div className="flex items-center space-x-3">
+          {appMode !== 'home' ? (
+            <button onClick={() => { setAppMode('home'); setIsComparing(false); }} className="w-10 h-10 rounded-full bg-[var(--track-bg)] flex items-center justify-center hover:bg-[var(--glass-border)] transition-colors">
+              <ChevronLeft className="w-6 h-6 text-[var(--text-main)]" />
+            </button>
+          ) : (
+            <div className="w-10 h-10 rounded-full bg-[var(--track-bg)] flex items-center justify-center text-[var(--apple-yellow)]">
+              <Car className="w-6 h-6" />
+            </div>
+          )}
+          <div>
+            <h1 className="text-sm text-[var(--text-muted)] font-medium tracking-widest uppercase">
+              {appMode === 'home' ? 'Dynamics Hub' : appMode === 'entry' ? '数据录入' : isComparing ? '多维对比引擎' : '数据库洞察'}
+            </h1>
+            <h2 className="text-xl font-semibold tracking-tight">
+              {appMode === 'home' ? '试驾评价终端' : appMode === 'entry' ? EVALUATION_STAGES[currentStep].title : '车辆分析视图'}
+            </h2>
+          </div>
+        </div>
+        <div className="flex items-center space-x-3">
+          {/* 新增：配置大模型 API Key 按钮 */}
+          <button onClick={() => { setTempApiConfig(apiConfig); setShowApiKeyModal(true); }} className="text-xs px-3 py-2 rounded-full bg-[var(--panel-bg)] border border-[var(--glass-border)] text-[var(--apple-yellow)] flex items-center active:scale-95 transition-all">
+            <Sparkles className="w-3 h-3 mr-1" />
+            {apiConfig.key ? '大模型已连接' : '链接大模型'}
+          </button>
+          <button onClick={() => fileInputRef.current.click()} className="text-xs px-3 py-2 rounded-full bg-[var(--panel-bg)] border border-[var(--glass-border)] text-[var(--apple-yellow)] flex items-center active:scale-95 transition-all">
+            <Database className="w-3 h-3 mr-1" />
+            {csvTemplate.headers.length > 0 ? '已连接' : '连接数据'}
+          </button>
+          <input type="file" accept=".csv" ref={fileInputRef} className="hidden" onChange={handleFileUpload} />
+          <button onClick={() => setIsDarkMode(!isDarkMode)} className="w-9 h-9 rounded-full bg-[var(--panel-bg)] border border-[var(--glass-border)] flex items-center justify-center transition-all active:scale-95">
+            {isDarkMode ? <Sun className="w-4 h-4 text-[var(--apple-yellow)]" /> : <Moon className="w-4 h-4 text-[var(--text-main)]" />}
+          </button>
+        </div>
+      </header>
+
+      <main className="relative flex-1 w-full pt-32 h-full overflow-hidden flex flex-col">
+        {appMode === 'home' && (
+          <div className="flex flex-col items-center justify-center h-full px-6 space-y-6 animate-in fade-in zoom-in-95 duration-500 pb-20">
+            <button onClick={() => setAppMode('entry')} className="w-full max-w-sm p-8 rounded-[2rem] glass-panel border border-[var(--glass-border)] hover:bg-[var(--panel-bg)] transition-all active:scale-95 group text-left relative overflow-hidden">
+              <div className="w-14 h-14 rounded-2xl bg-[var(--apple-yellow)]/20 text-[var(--apple-yellow)] flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                <Plus className="w-7 h-7" />
+              </div>
+              <h2 className="text-2xl font-bold mb-2">开始新试驾</h2>
+              <p className="text-[var(--text-muted)] text-sm">按照静态、城市、高速等维度全面记录动态表现。</p>
+            </button>
+            <button onClick={() => setAppMode('view')} className="w-full max-w-sm p-8 rounded-[2rem] glass-panel border border-[var(--glass-border)] hover:bg-[var(--panel-bg)] transition-all active:scale-95 group text-left relative overflow-hidden">
+              <div className="w-14 h-14 rounded-2xl bg-blue-500/20 text-blue-400 flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                <BarChart2 className="w-7 h-7" />
+              </div>
+              <h2 className="text-2xl font-bold mb-2">查看与对比</h2>
+              <p className="text-[var(--text-muted)] text-sm">洞察历史数据库，查看各级别标杆并进行横向对比。</p>
+            </button>
+          </div>
+        )}
+
+        {appMode === 'entry' && (
+          <div className="w-full h-full pb-32">
+            <div className="flex w-full h-full transition-transform duration-700 ease-[cubic-bezier(0.23,1,0.32,1)]" style={{ transform: `translateX(-${currentStep * 100}%)` }}>
+              {EVALUATION_STAGES.map((s, index) => (
+                <div key={s.id} className="w-full h-full flex-shrink-0 px-6 overflow-y-auto no-scrollbar">
+                  
+                  {s.id === 'setup' && (
+                    <div className="flex flex-col items-center justify-center h-[85%] space-y-5 w-full max-w-sm mx-auto">
+                      <div className="w-24 h-24 rounded-3xl bg-[var(--panel-bg)] border border-[var(--glass-border)] flex items-center justify-center shadow-lg transition-colors">
+                        {vehicleInfo.brand ? <span className="text-3xl font-bold tracking-widest text-[var(--apple-yellow)]">{vehicleInfo.brand.substring(0, 4)}</span> : <Car className="w-12 h-12 text-[var(--apple-yellow)] opacity-80" />}
+                      </div>
+                      <div className="w-full rounded-2xl bg-[var(--panel-bg)] border border-[var(--glass-border)] shadow-sm overflow-hidden divide-y divide-[var(--glass-border)]">
+                        {['brand', 'year', 'model'].map(key => (
+                          <div key={key} className="flex items-center px-4 py-3 relative">
+                            <span className="w-24 text-sm text-[var(--text-muted)] font-medium">{{brand:'品牌', year:'年款', model:'具体车型'}[key]}</span>
+                            <input type="text" value={vehicleInfo[key]} onChange={(e) => setVehicleInfo({ ...vehicleInfo, [key]: e.target.value })} className="flex-1 bg-transparent text-[var(--text-main)] font-semibold focus:outline-none" placeholder="输入..." />
+                          </div>
+                        ))}
+                        <div className="flex items-center px-4 py-3 relative">
+                          <span className="w-24 text-sm text-[var(--text-muted)] font-medium">车型定位</span>
+                          <div className="flex-1 relative">
+                            <select value={vehicleInfo.segment} onChange={(e) => setVehicleInfo({ ...vehicleInfo, segment: e.target.value })} className="w-full bg-transparent text-[var(--text-main)] font-semibold focus:outline-none cursor-pointer">
+                              {SEGMENT_OPTIONS.map(opt => <option key={opt} value={opt} className="bg-[var(--bg-main)] text-[var(--text-main)]">{opt}</option>)}
+                            </select>
+                            <ChevronRight className="w-4 h-4 text-[var(--text-muted)] absolute right-0 top-1/2 -translate-y-1/2 pointer-events-none transform rotate-90" />
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="w-full flex flex-col items-center">
+                        <button 
+                          onClick={fetchAIVehicleData} 
+                          disabled={isFetchingAI}
+                          className="w-full py-3.5 rounded-2xl bg-gradient-to-r from-[var(--apple-yellow)] to-yellow-500 text-black font-bold text-[15px] active:scale-95 transition-all shadow-[0_4px_15px_rgba(255,214,10,0.3)] flex items-center justify-center space-x-2 disabled:opacity-70 disabled:scale-100"
+                        >
+                          {isFetchingAI ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
+                          <span>{isFetchingAI ? '正在云端检索客观参数...' : '✨ 接入大模型获取客观参数'}</span>
+                        </button>
+                        <div className="h-6 mt-2 text-center w-full px-2">
+                           {aiErrorMsg && <p className="text-xs text-red-500 font-medium animate-in fade-in leading-tight">{aiErrorMsg}</p>}
+                           {(!aiErrorMsg && vehicleInfo.length) && <p className="text-xs text-[var(--apple-yellow)] font-medium animate-in fade-in">✅ 已填入车辆三围与硬件数据</p>}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {s.items && (
+                    <div className="pt-4 pb-12">
+                      {s.items.map((item, i) => (
+                        <div key={item.id} style={{ animationDelay: `${i * 100}ms` }} className="animate-in fade-in slide-in-from-bottom-8 duration-700 fill-mode-both">
+                          <FluidSlider label={item.label} value={scores[item.id]} onChange={(val) => setScores(p => ({ ...p, [item.id]: val }))} leftAnchor={item.leftAnchor} rightAnchor={item.rightAnchor} />
+                        </div>
+                      ))}
+                      <div className="mt-6 p-4 rounded-3xl bg-[var(--panel-bg)] border border-[var(--glass-border)] flex flex-col space-y-3">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h4 className="text-sm font-medium text-[var(--text-main)]">主观备忘录（{s.title}）</h4>
+                            <p className="text-xs text-[var(--text-muted)]">专属笔记，对应数据表内当前大类</p>
+                          </div>
+                          <button onClick={() => toggleRecord(s.id)} className={`w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 ${activeRecordStage === s.id ? 'bg-red-500 shadow-[0_0_20px_rgba(239,68,68,0.5)] scale-110' : 'bg-[var(--track-bg)] active:scale-95'}`}>
+                            <Mic className={`w-5 h-5 ${activeRecordStage === s.id ? 'text-white animate-pulse' : 'text-[var(--apple-yellow)]'}`} />
+                          </button>
+                        </div>
+                        <textarea 
+                          value={memos[s.id] || ''} 
+                          onChange={(e) => setMemos(p => ({ ...p, [s.id]: e.target.value }))} 
+                          className="w-full h-20 bg-transparent text-sm focus:outline-none resize-none pt-2" 
+                          placeholder={`记录关于 ${s.title} 的详细感受...`} 
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {s.id === 'summary' && (
+                    <div className="flex flex-col items-center pt-8">
+                      <div className="w-full glass-panel rounded-3xl p-6 border border-[var(--glass-border)] mb-8">
+                        <h3 className="text-center text-[var(--text-muted)] font-medium tracking-widest mb-4">能力总貌分析</h3>
+                        <RadarChart data={getRadarDataAverages(scores)} />
+                      </div>
+                      <button onClick={generateAndDownloadCSV} className="w-full py-5 rounded-2xl bg-[var(--apple-yellow)] text-black font-bold text-lg active:scale-95 transition-all shadow-xl flex items-center justify-center space-x-2">
+                        <Download className="w-6 h-6" /><span>保存至数据库</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            <footer className="absolute bottom-0 w-full glass-panel border-t border-[var(--glass-border)] pb-10 pt-4 px-6 flex justify-between items-center z-50">
+              <button onClick={() => setCurrentStep(p => p - 1)} className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${currentStep === 0 ? 'opacity-30' : 'bg-[var(--track-bg)] active:scale-90'}`} disabled={currentStep === 0}><ChevronLeft className="w-7 h-7 text-[var(--text-main)]" /></button>
+              <div className="flex space-x-2">{EVALUATION_STAGES.map((_, i) => <div key={i} className={`h-2 rounded-full transition-all ${i === currentStep ? 'w-8 bg-[var(--apple-yellow)]' : 'w-2 bg-[var(--track-bg)]'}`} />)}</div>
+              <button onClick={() => setCurrentStep(p => p + 1)} className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${currentStep === EVALUATION_STAGES.length - 1 ? 'opacity-30' : 'bg-[var(--apple-yellow)] active:scale-90 shadow-lg'}`} disabled={currentStep === EVALUATION_STAGES.length - 1}><ChevronRight className="w-7 h-7 text-[#000000]" /></button>
+            </footer>
+          </div>
+        )}
+
+        {appMode === 'view' && (
+          <div className="w-full h-full flex flex-col relative animate-in fade-in duration-500 overflow-hidden">
+            {csvTemplate.data.length === 0 ? (
+              <div className="flex-1 flex flex-col items-center justify-center text-[var(--text-muted)] space-y-4 px-6 text-center">
+                <Database className="w-16 h-16 opacity-20" />
+                <p>暂无数据。请点击右上角连接包含历史数据的 Car_Database.csv 文件。</p>
+              </div>
+            ) : isComparing ? (
+              <div className="flex-1 overflow-hidden bg-[var(--bg-main)] flex flex-col pb-6">
+                <div className="p-6 pb-2">
+                  <h3 className="text-xl font-bold flex items-center text-[var(--apple-yellow)]">
+                    <BarChart2 className="w-5 h-5 mr-2" /> 多维评分对比矩阵
+                  </h3>
+                  <p className="text-xs text-[var(--text-muted)] mt-1 ml-7">上下滑动查看维度，左右滑动对比车辆（行列已双向冻结）</p>
+                </div>
+                
+                <div className="flex-1 px-6 overflow-hidden">
+                  <div className="compare-table-container no-scrollbar shadow-xl">
+                    <table className="compare-table">
+                      <thead>
+                        <tr>
+                          <th className="sticky-top-left min-w-[140px] text-[var(--text-muted)] font-medium align-bottom">
+                            评估维度
+                          </th>
+                          {selectedCars.map(idx => {
+                            const car = csvTemplate.data[idx];
+                            const radarData = getRadarDataFromCSVRow(car);
+                            return (
+                              <th key={idx} className="sticky-top min-w-[160px] align-top">
+                                <div className="flex flex-col items-center">
+                                  <div className="w-full flex justify-center mb-3">
+                                    <RadarChart data={radarData} size={110} color="var(--apple-yellow)" showLabels={false} />
+                                  </div>
+                                  <div className="text-center w-full space-y-0.5">
+                                    <div className="text-base font-bold text-[var(--text-main)] truncate">{car['厂牌']} {car['车型']}</div>
+                                    <div className="text-xs text-[var(--text-muted)] font-normal">{car['年款'] || '-'}款 | {car['级别'] || '-'}</div>
+                                    <div className="text-xs font-mono text-[var(--apple-yellow)] bg-[var(--apple-yellow)]/10 inline-block px-2 py-0.5 rounded mt-1 border border-[var(--apple-yellow)]/20">
+                                      {car['市场价区间(万元)'] ? `￥${car['市场价区间(万元)']}万` : '暂无报价'}
+                                    </div>
+                                  </div>
+                                </div>
+                              </th>
+                            );
+                          })}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {compareDimensions.map((dim, rowIdx) => {
+                          const scores = selectedCars.map(idx => Number(csvTemplate.data[idx][dim]) || 0);
+                          const maxScore = Math.max(...scores);
+                          const colorInfo = getDimColorInfo(dim);
+                          
+                          return (
+                            <tr key={dim} className="hover:bg-[var(--glass-border)] transition-colors">
+                              <td className="sticky-left text-sm font-medium relative" style={{ background: 'var(--panel-bg)' }}>
+                                <div className="absolute inset-0 z-0 pointer-events-none" style={{ backgroundColor: colorInfo.bg }}></div>
+                                <span className="relative z-10" style={{ color: colorInfo.text }}>
+                                  {dim.split('-')[1] || dim}
+                                </span>
+                              </td>
+                              {selectedCars.map(idx => {
+                                const val = Number(csvTemplate.data[idx][dim]) || 0;
+                                const isBest = val === maxScore && val > 0;
+                                return (
+                                  <td key={idx} className="text-center font-mono relative">
+                                    <div className="absolute inset-0 z-0 pointer-events-none" style={{ backgroundColor: colorInfo.bg }}></div>
+                                    <span className={`relative z-10 ${isBest ? 'text-[var(--apple-yellow)] font-bold text-lg bg-[var(--apple-yellow)]/10 px-2 py-1 rounded' : 'text-[var(--text-main)]'}`}>
+                                      {val || '-'}
+                                    </span>
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="flex-1 overflow-y-auto overflow-x-hidden no-scrollbar pb-32">
+                <div className="px-6 py-4">
+                  <h3 className="text-lg font-bold mb-4 flex items-center">
+                    <Activity className="w-5 h-5 mr-2 text-blue-400" /> 细分市场操控标杆
+                  </h3>
+                  <div className="flex overflow-x-auto gap-4 pb-4 snap-x no-scrollbar">
+                    {topCarsBySegment.map((topInfo, i) => (
+                      <div key={i} className="min-w-[280px] p-5 rounded-3xl glass-panel border border-[var(--glass-border)] snap-center flex flex-col items-center shrink-0">
+                        <div className="w-full flex justify-between items-center mb-2">
+                          <span className="text-xs font-bold px-2 py-1 rounded bg-blue-500/20 text-blue-400 uppercase tracking-wider">{topInfo.segment}</span>
+                          <span className="text-xs text-[var(--text-muted)] font-mono">得分: {topInfo.score}</span>
+                        </div>
+                        <h4 className="font-bold text-lg w-full text-center truncate">{topInfo.row['厂牌']} {topInfo.row['车型']}</h4>
+                        <div className="scale-75 -mt-6 -mb-6">
+                          <RadarChart data={topInfo.radarData} size={250} color="#3B82F6" />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="px-6 mt-2">
+                  <div className="flex justify-between items-end mb-4">
+                    <h3 className="text-lg font-bold flex items-center">
+                      <Database className="w-5 h-5 mr-2 text-[var(--apple-yellow)]" /> 全量数据库
+                    </h3>
+                    {selectedCars.length > 0 && (
+                      <div className="flex items-center space-x-3">
+                        <span className="text-xs text-[var(--apple-yellow)] font-medium bg-[var(--apple-yellow)]/10 px-3 py-1 rounded-full border border-[var(--apple-yellow)]/20">
+                          已选 {selectedCars.length} 台车
+                        </span>
+                        <button onClick={() => setSelectedCars([])} className="text-xs text-[var(--text-muted)] hover:text-white transition-colors bg-[var(--panel-bg)] px-3 py-1 rounded-full border border-[var(--glass-border)]">
+                          取消选择
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                  <div className="overflow-x-auto overflow-y-auto max-h-[60vh] rounded-2xl border border-[var(--glass-border)] bg-[var(--panel-bg)] shadow-inner no-scrollbar mb-8">
+                    <table className="w-full text-left apple-table relative">
+                      <thead>
+                        <tr>
+                          <th className="w-12 text-center sticky left-0 z-30 bg-[var(--panel-bg)] border-r border-[var(--glass-border)]">对比</th>
+                          {processedColumns.map(group =>
+                            group.headers.map(h => (
+                              <th key={h} className="relative border-r border-[var(--glass-border)] min-w-[90px] whitespace-nowrap">
+                                <div className="absolute inset-0 z-0 pointer-events-none" style={{ backgroundColor: group.bg }}></div>
+                                <span className="relative z-10">{h.includes('-') ? h.split('-')[1] : h}</span>
+                              </th>
+                            ))
+                          )}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {csvTemplate.data.map((row, idx) => {
+                          const isSelected = selectedCars.includes(idx);
+                          return (
+                            <tr key={idx} onClick={() => {
+                                if (isSelected) setSelectedCars(p => p.filter(i => i !== idx));
+                                else setSelectedCars(p => [...p, idx]);
+                              }}
+                              className={`cursor-pointer transition-colors ${isSelected ? 'bg-[var(--apple-yellow)]/10' : 'hover:bg-[var(--glass-border)]'}`}
+                            >
+                              <td className="text-center sticky left-0 z-10 border-r border-[var(--glass-border)] bg-[var(--panel-bg)]">
+                                {isSelected ? <CheckSquare className="w-5 h-5 inline-block text-[var(--apple-yellow)]" /> : <Square className="w-5 h-5 inline-block text-[var(--text-muted)]" />}
+                              </td>
+                              {processedColumns.map(group =>
+                                group.headers.map(h => (
+                                  <td key={h} style={{ backgroundColor: group.bg }} className={`border-r border-[var(--glass-border)] ${isSelected ? 'text-[var(--apple-yellow)] font-medium' : ''}`}>
+                                    {row[h]}
+                                  </td>
+                                ))
+                              )}
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot className="z-20">
+                        <tr>
+                          <td className="sticky bottom-0 left-0 z-30 bg-[var(--panel-bg)] border-t border-r border-[var(--glass-border)]"></td>
+                          {processedColumns.map(group => (
+                            <td
+                              key={group.prefix}
+                              colSpan={group.headers.length}
+                              className="sticky bottom-0 relative border-t border-r border-[var(--glass-border)] text-center py-2.5 text-xs font-bold tracking-widest uppercase bg-[var(--panel-bg)] shadow-[0_-1px_0_var(--glass-border)]"
+                            >
+                              <div className="absolute inset-0 z-0 pointer-events-none" style={{ backgroundColor: group.bg }}></div>
+                              <span className="relative z-10" style={{ color: group.text }}>{group.label}</span>
+                            </td>
+                          ))}
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+
+                {selectedCars.length > 0 && !isComparing && (
+                  <div className="fixed bottom-8 left-0 w-full flex justify-center z-50 animate-in slide-in-from-bottom-10 space-x-4">
+                    {selectedCars.length === 1 && (
+                      <button 
+                        onClick={() => {
+                          setEditingCarIndex(selectedCars[0]);
+                          setEditingData({ ...csvTemplate.data[selectedCars[0]] });
+                        }}
+                        className="px-8 py-4 rounded-full bg-[var(--panel-bg)] text-[var(--apple-yellow)] border border-[var(--apple-yellow)]/30 font-bold text-lg shadow-[0_10px_40px_rgba(0,0,0,0.5)] hover:scale-105 active:scale-95 transition-all flex items-center space-x-2 backdrop-blur-md"
+                      >
+                        <Edit3 className="w-6 h-6" />
+                        <span>查看评语与编辑</span>
+                      </button>
+                    )}
+                    {selectedCars.length > 1 && (
+                      <button 
+                        onClick={() => setIsComparing(true)}
+                        className="px-8 py-4 rounded-full bg-[var(--apple-yellow)] text-black font-bold text-lg shadow-[0_10px_40px_rgba(255,214,10,0.4)] hover:scale-105 active:scale-95 transition-all flex items-center space-x-2"
+                      >
+                        <Activity className="w-6 h-6" />
+                        <span>横向对比 {selectedCars.length} 款车型</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </main>
+
+      {/* ======= API Key 配置弹窗 ======= */}
+      {showApiKeyModal && (
+        <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center p-0 sm:p-6 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+           <div className="w-full max-h-[90vh] sm:h-auto sm:max-h-[85vh] max-w-md bg-[var(--bg-main)] rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-[var(--glass-border)] animate-in slide-in-from-bottom-10 sm:zoom-in-95">
+             <div className="px-6 py-4 border-b border-[var(--glass-border)] flex justify-between items-center bg-[var(--panel-bg)]">
+                <div>
+                  <h3 className="text-xl font-bold text-[var(--text-main)] flex items-center"><Key className="w-5 h-5 mr-2 text-[var(--apple-yellow)]"/> 配置通用大模型 API</h3>
+                </div>
+                <button onClick={() => setShowApiKeyModal(false)} className="w-8 h-8 rounded-full bg-[var(--track-bg)] flex items-center justify-center text-[var(--text-muted)] hover:text-white transition-colors">
+                  <X className="w-5 h-5" />
+                </button>
+             </div>
+             
+             <div className="p-6 space-y-4">
+               <p className="text-sm text-[var(--text-muted)]">
+                 支持任意兼容 OpenAI 通信协议的大模型（如 DeepSeek, Kimi, GPT 等）。您的配置将仅加密保存在本地。
+               </p>
+               
+               <div className="space-y-3">
+                 <div>
+                   <label className="text-xs text-[var(--text-muted)] mb-1 block">接口地址 (Base URL)</label>
+                   <input
+                     type="text"
+                     value={tempApiConfig.url}
+                     onChange={(e) => setTempApiConfig({...tempApiConfig, url: e.target.value})}
+                     placeholder="例如：https://api.deepseek.com/v1/chat/completions"
+                     className="w-full bg-[var(--track-bg)] text-[var(--text-main)] text-sm p-3 rounded-xl border border-[var(--glass-border)] focus:outline-none focus:border-[var(--apple-yellow)] transition-colors"
+                   />
+                 </div>
+                 
+                 <div>
+                   <label className="text-xs text-[var(--text-muted)] mb-1 block">模型名称 (Model Name)</label>
+                   <input
+                     type="text"
+                     value={tempApiConfig.model}
+                     onChange={(e) => setTempApiConfig({...tempApiConfig, model: e.target.value})}
+                     placeholder="例如：deepseek-chat"
+                     className="w-full bg-[var(--track-bg)] text-[var(--text-main)] text-sm p-3 rounded-xl border border-[var(--glass-border)] focus:outline-none focus:border-[var(--apple-yellow)] transition-colors"
+                   />
+                 </div>
+
+                 <div>
+                   <label className="text-xs text-[var(--text-muted)] mb-1 block">API 密钥 (API Key)</label>
+                   <input
+                     type="password"
+                     value={tempApiConfig.key}
+                     onChange={(e) => setTempApiConfig({...tempApiConfig, key: e.target.value})}
+                     placeholder="Bearer Token..."
+                     className="w-full bg-[var(--track-bg)] text-[var(--text-main)] text-sm p-3 rounded-xl border border-[var(--glass-border)] focus:outline-none focus:border-[var(--apple-yellow)] transition-colors"
+                   />
+                 </div>
+               </div>
+             </div>
+             
+             <div className="px-6 py-4 border-t border-[var(--glass-border)] bg-[var(--panel-bg)] flex justify-end space-x-3">
+               <button 
+                 onClick={() => setShowApiKeyModal(false)} 
+                 className="px-4 py-2 rounded-xl bg-[var(--track-bg)] text-[var(--text-main)] hover:bg-[var(--glass-border)] transition-colors"
+               >
+                 取消
+               </button>
+               <button 
+                 onClick={() => {
+                   setApiConfig(tempApiConfig);
+                   localStorage.setItem('llmApiConfig', JSON.stringify(tempApiConfig));
+                   setShowApiKeyModal(false);
+                 }} 
+                 className="px-6 py-2 rounded-xl bg-[var(--apple-yellow)] text-black font-bold flex items-center hover:brightness-110 active:scale-95 transition-all shadow-lg"
+               >
+                 保存配置
+               </button>
+             </div>
+           </div>
+        </div>
+      )}
+
+      {/* ======= AI 智能参数确认与编辑弹窗 ======= */}
+      {showAIModal && (
+        <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center p-0 sm:p-6 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+           <div className="w-full max-h-[90vh] sm:h-auto sm:max-h-[85vh] max-w-2xl bg-[var(--bg-main)] rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-[var(--glass-border)] animate-in slide-in-from-bottom-10 sm:zoom-in-95">
+             <div className="px-6 py-4 border-b border-[var(--glass-border)] flex justify-between items-center bg-[var(--panel-bg)]">
+                <div>
+                  <h3 className="text-xl font-bold text-[var(--text-main)] flex items-center"><Sparkles className="w-5 h-5 mr-2 text-[var(--apple-yellow)]"/> 识别出该车型的硬件数据</h3>
+                  <p className="text-xs text-[var(--text-muted)] mt-1">您可在此处对非标配数据进行微调</p>
+                </div>
+                <button onClick={() => setShowAIModal(false)} className="w-8 h-8 rounded-full bg-[var(--track-bg)] flex items-center justify-center text-[var(--text-muted)] hover:text-white transition-colors">
+                  <X className="w-5 h-5" />
+                </button>
+             </div>
+             
+             <div className="flex-1 overflow-y-auto p-6 space-y-6 no-scrollbar">
+               <div className="grid grid-cols-2 gap-4">
+                 {[
+                   { key: 'length', label: '车长 (mm)' }, { key: 'width', label: '车宽 (mm)' },
+                   { key: 'height', label: '车高 (mm)' }, { key: 'wheelbase', label: '轴距 (mm)' },
+                   { key: 'weight', label: '整备质量 (kg)' }, { key: 'battery', label: '电池容量 (kWh)' },
+                   { key: 'range', label: 'CLTC续航 (km)' }, { key: 'engine', label: '发动机参数' },
+                   { key: 'motor', label: '电机参数' }
+                 ].map(field => (
+                   <div key={field.key} className="flex flex-col">
+                     <label className="text-xs text-[var(--text-muted)] mb-1.5">{field.label}</label>
+                     <input 
+                       type="text" 
+                       value={aiData[field.key] || ''} 
+                       onChange={(e) => setAiData({...aiData, [field.key]: e.target.value})} 
+                       className="bg-[var(--track-bg)] text-[var(--text-main)] font-semibold p-2.5 rounded-xl border border-[var(--glass-border)] focus:outline-none focus:border-[var(--apple-yellow)] transition-colors"
+                     />
+                   </div>
+                 ))}
+               </div>
+             </div>
+             
+             <div className="px-6 py-4 border-t border-[var(--glass-border)] bg-[var(--panel-bg)] flex justify-end">
+               <button 
+                 onClick={confirmAiData} 
+                 className="px-6 py-3 rounded-xl bg-[var(--apple-yellow)] text-black font-bold flex items-center hover:brightness-110 active:scale-95 transition-all shadow-lg"
+               >
+                 <CheckCircle2 className="w-5 h-5 mr-2" />
+                 确认填入表单
+               </button>
+             </div>
+           </div>
+        </div>
+      )}
+
+      {/* ======= 单车评语编辑弹窗 ======= */}
+      {editingCarIndex !== null && (
+        <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center p-0 sm:p-6 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+           <div className="w-full h-[90vh] sm:h-[85vh] max-w-3xl bg-[var(--bg-main)] rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-[var(--glass-border)] animate-in slide-in-from-bottom-10 sm:zoom-in-95">
+             <div className="px-6 py-4 border-b border-[var(--glass-border)] flex justify-between items-center bg-[var(--panel-bg)]">
+                <div>
+                  <h3 className="text-xl font-bold text-[var(--text-main)]">车辆评语与得分编辑</h3>
+                  <p className="text-xs text-[var(--text-muted)] mt-1">{editingData['厂牌']} {editingData['车型']} ({editingData['年款']})</p>
+                </div>
+                <button onClick={() => setEditingCarIndex(null)} className="w-8 h-8 rounded-full bg-[var(--track-bg)] flex items-center justify-center text-[var(--text-muted)] hover:text-white transition-colors">
+                  <X className="w-5 h-5" />
+                </button>
+             </div>
+             
+             <div className="flex-1 overflow-y-auto p-6 space-y-8 no-scrollbar">
+               {EVALUATION_STAGES.filter(s => s.items).map(stage => (
+                 <div key={stage.id} className="bg-[var(--panel-bg)] border border-[var(--glass-border)] rounded-2xl p-5">
+                   <h4 className="text-lg font-bold mb-4 flex items-center text-[var(--apple-yellow)]">
+                     {stage.icon} <span className="ml-2">{stage.title}</span>
+                   </h4>
+                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
+                     {stage.items.map(item => (
+                       <div key={item.id} className="flex flex-col">
+                         <label className="text-xs text-[var(--text-muted)] mb-1.5">{item.label} (1-5分)</label>
+                         <input 
+                           type="number" step="0.1" min="1" max="5" 
+                           value={editingData[item.csvKey] || ''} 
+                           onChange={(e) => setEditingData({...editingData, [item.csvKey]: e.target.value})} 
+                           className="bg-[var(--track-bg)] text-[var(--text-main)] font-mono p-2.5 rounded-xl border border-[var(--glass-border)] focus:outline-none focus:border-[var(--apple-yellow)] transition-colors"
+                         />
+                       </div>
+                     ))}
+                   </div>
+                   <div className="flex flex-col">
+                     <label className="text-xs text-[var(--text-muted)] mb-1.5 flex items-center"><MessageSquare className="w-3 h-3 mr-1"/> 主观评价留言</label>
+                     <textarea 
+                       value={editingData[stage.memoKey] || ''} 
+                       onChange={(e) => setEditingData({...editingData, [stage.memoKey]: e.target.value})} 
+                       className="bg-[var(--track-bg)] text-[var(--text-main)] p-3 rounded-xl border border-[var(--glass-border)] focus:outline-none focus:border-[var(--apple-yellow)] transition-colors min-h-[80px] text-sm resize-none"
+                     />
+                   </div>
+                 </div>
+               ))}
+             </div>
+             
+             <div className="px-6 py-4 border-t border-[var(--glass-border)] bg-[var(--panel-bg)] flex justify-end">
+               <button 
+                 onClick={() => {
+                   const newData = [...csvTemplate.data];
+                   newData[editingCarIndex] = editingData;
+                   setCsvTemplate({...csvTemplate, data: newData});
+                   setEditingCarIndex(null);
+                 }} 
+                 className="px-6 py-3 rounded-xl bg-[var(--apple-yellow)] text-black font-bold flex items-center hover:brightness-110 active:scale-95 transition-all shadow-lg"
+               >
+                 <Save className="w-5 h-5 mr-2" />
+                 保存修改
+               </button>
+             </div>
+           </div>
+        </div>
+      )}
+    </div>
+  );
+}
