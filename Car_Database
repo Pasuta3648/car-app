@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
   Mic, ChevronRight, ChevronLeft, Car, CheckCircle2, Activity, 
   Sun, Moon, Upload, Download, Database, Plus, BarChart2, CheckSquare, Square, Armchair, Wind, Zap,
-  X, Edit3, Save, MessageSquare, Sparkles, Loader2
+  X, Edit3, Save, MessageSquare, Sparkles, Loader2, Key
 } from 'lucide-react';
 
 // --- 数据结构定义 (严格对齐 Car_Database.csv) ---
@@ -98,7 +98,6 @@ const parseCSV = (str) => {
   return { headers, data };
 };
 
-// 从本地滑块分数中提取大类平均分用于雷达图
 const getRadarDataAverages = (scoresObj) => {
   const radarData = {};
   EVALUATION_STAGES.forEach(stage => {
@@ -110,7 +109,6 @@ const getRadarDataAverages = (scoresObj) => {
   return radarData;
 };
 
-// 从CSV数据行中提取大类平均分用于对比雷达图
 const getRadarDataFromCSVRow = (row) => {
   const radarData = {};
   EVALUATION_STAGES.forEach(stage => {
@@ -120,7 +118,7 @@ const getRadarDataFromCSVRow = (row) => {
       stage.items.forEach(item => {
         let val = Number(row[item.csvKey]);
         if (!isNaN(val) && val > 0) {
-          sum += (val - 1) * 25; // 1-5 to 0-100
+          sum += (val - 1) * 25; 
           validCount++;
         }
       });
@@ -130,7 +128,6 @@ const getRadarDataFromCSVRow = (row) => {
   return radarData;
 };
 
-// 获取具体维度的UI色块配置
 const getDimColorInfo = (dimName) => {
   if (dimName.includes('静态')) return { bg: 'rgba(59, 130, 246, 0.08)', text: '#3b82f6' };
   if (dimName.includes('城市')) return { bg: 'rgba(16, 185, 129, 0.08)', text: '#10b981' };
@@ -237,12 +234,21 @@ const RadarChart = ({ data, size = 300, color = "var(--apple-yellow)", showLabel
 
 // --- 主应用 ---
 export default function App() {
-  const [appMode, setAppMode] = useState('home'); // home, entry, view
+  const [appMode, setAppMode] = useState('home'); 
   const [isDarkMode, setIsDarkMode] = useState(true);
   
   // 数据库状态
   const [csvTemplate, setCsvTemplate] = useState({ raw: '', headers: [], data: [] });
   const fileInputRef = useRef(null);
+
+  // API 凭证状态 (使用 localStorage 本地保存，兼容通用大模型)
+  const [apiConfig, setApiConfig] = useState(() => {
+    const stored = localStorage.getItem('llmApiConfig');
+    // 默认提供一个 OpenAI 格式的常见结构
+    return stored ? JSON.parse(stored) : { url: 'https://api.openai.com/v1/chat/completions', key: '', model: 'gpt-3.5-turbo' };
+  });
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [tempApiConfig, setTempApiConfig] = useState(apiConfig);
 
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
@@ -259,7 +265,6 @@ export default function App() {
 
   // ----------------- 录入模块状态 -----------------
   const [currentStep, setCurrentStep] = useState(0);
-  // 新增：包含所有客观硬件参数的状态
   const [vehicleInfo, setVehicleInfo] = useState({ 
     brand: '极氪', segment: '中型SUV', year: '2024', model: '007 GT',
     length: '', width: '', height: '', wheelbase: '', weight: '', battery: '', range: '', engine: '', motor: ''
@@ -283,6 +288,12 @@ export default function App() {
   const [aiErrorMsg, setAiErrorMsg] = useState('');
 
   const fetchAIVehicleData = async () => {
+    if (!apiConfig.key || !apiConfig.url) {
+      setAiErrorMsg("请先点击右上角配置大模型 API 信息！");
+      setTimeout(() => setAiErrorMsg(''), 3000);
+      return;
+    }
+    
     if (!vehicleInfo.brand || !vehicleInfo.model) {
       setAiErrorMsg("请先填写品牌和具体车型！");
       setTimeout(() => setAiErrorMsg(''), 3000);
@@ -291,49 +302,37 @@ export default function App() {
     setIsFetchingAI(true);
     setAiErrorMsg('');
     
-    // 强制输出为标准JSON结构
-    const prompt = `你是一个汽车参数数据库专家。请检索 ${vehicleInfo.year || ''}款 ${vehicleInfo.brand} ${vehicleInfo.model} 的官方技术参数。若找不到特定款，请基于车系最新款估算。如果找不到确切值，请保持空字符串。只输出纯 JSON 数据，禁止附加其他文本。`;
-    
-    const apiKey = ""; // Canvas 环境自动注入
+    const prompt = `你是一个汽车参数数据库专家。请检索 ${vehicleInfo.year || ''}款 ${vehicleInfo.brand} ${vehicleInfo.model} 的官方技术参数。若找不到特定款，请基于车系最新款估算。如果找不到确切值，请保持空字符串。
+请严格输出一个包含以下键值的 JSON 对象（全为字符串类型）：
+{"length": "长(mm)", "width": "宽(mm)", "height": "高(mm)", "wheelbase": "轴距(mm)", "weight": "整备质量(kg)", "battery": "电池容量(kWh)", "range": "CLTC续航(km)", "engine": "发动机排量与参数", "motor": "电机布局与功率"}
+不要输出任何 Markdown 标记（如 \`\`\`json），只输出纯 JSON 字符串。`;
     
     try {
-      // 模拟退避重试机制
       let response;
       for (let attempt = 0; attempt < 3; attempt++) {
-        response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+        response = await fetch(apiConfig.url, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { 
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${apiConfig.key}`
+          },
           body: JSON.stringify({
-            contents: [{ parts: [{ text: prompt }] }],
-            generationConfig: {
-              responseMimeType: "application/json",
-              responseSchema: {
-                type: "OBJECT",
-                properties: {
-                  length: {type: "STRING", description: "长(mm)"},
-                  width: {type: "STRING", description: "宽(mm)"},
-                  height: {type: "STRING", description: "高(mm)"},
-                  wheelbase: {type: "STRING", description: "轴距(mm)"},
-                  weight: {type: "STRING", description: "整备质量(kg)"},
-                  battery: {type: "STRING", description: "电池容量(kWh)"},
-                  range: {type: "STRING", description: "CLTC续航(km)"},
-                  engine: {type: "STRING", description: "发动机排量与参数"},
-                  motor: {type: "STRING", description: "电机布局与功率"}
-                }
-              }
-            }
+            model: apiConfig.model,
+            messages: [{ role: "user", content: prompt }],
+            temperature: 0.1
           })
         });
         if (response.ok) break;
         await new Promise(r => setTimeout(r, 1500));
       }
 
-      if (!response || !response.ok) throw new Error("获取大模型数据失败");
+      if (!response || !response.ok) throw new Error("获取大模型数据失败，可能是API密钥/地址错误或超出配额。");
       
       const result = await response.json();
-      const rawText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+      const rawText = result.choices?.[0]?.message?.content;
       if (!rawText) throw new Error("大模型返回空数据");
       
+      // 清理可能存在的 Markdown 格式
       const parsed = JSON.parse(rawText.replace(/```json/g, '').replace(/```/g, '').trim());
       setAiData(parsed);
       setShowAIModal(true);
@@ -341,7 +340,7 @@ export default function App() {
 
     } catch (err) {
       console.error(err);
-      setAiErrorMsg("AI获取失败，可能由于网络或环境限制。");
+      setAiErrorMsg("AI获取失败，请检查API配置或网络连接。");
       setTimeout(() => setAiErrorMsg(''), 3000);
     } finally {
       setIsFetchingAI(false);
@@ -372,7 +371,6 @@ export default function App() {
   const generateAndDownloadCSV = () => {
     let outputCsv = "";
     if (csvTemplate.headers.length === 0) {
-      // 包含最新引入的客观参数表头
       const headers = ['厂牌', '年款', '车型', '级别', '车长(mm)', '车宽(mm)', '车高(mm)', '轴距(mm)', '整备质量(kg)', '电池容量(kWh)', 'CLTC续航', '发动机参数', '电机参数'];
       const row = [ 
         vehicleInfo.brand, vehicleInfo.year, vehicleInfo.model, vehicleInfo.segment,
@@ -392,7 +390,6 @@ export default function App() {
       const newRow = new Array(headers.length).fill('');
       const setVal = (h, v) => { const idx = headers.indexOf(h); if (idx !== -1) newRow[idx] = v; };
       
-      // 精确映射所有客观与主观数据
       setVal('厂牌', vehicleInfo.brand); setVal('年款', vehicleInfo.year); setVal('车型', vehicleInfo.model); setVal('级别', vehicleInfo.segment);
       setVal('车长(mm)', vehicleInfo.length); setVal('车宽(mm)', vehicleInfo.width); setVal('车高(mm)', vehicleInfo.height); setVal('轴距(mm)', vehicleInfo.wheelbase);
       setVal('整备质量(kg)', vehicleInfo.weight); setVal('电池容量(kWh)', vehicleInfo.battery); setVal('CLTC续航', vehicleInfo.range);
@@ -541,7 +538,12 @@ export default function App() {
             </h2>
           </div>
         </div>
-        <div className="flex items-center space-x-4">
+        <div className="flex items-center space-x-3">
+          {/* 新增：配置大模型 API Key 按钮 */}
+          <button onClick={() => { setTempApiConfig(apiConfig); setShowApiKeyModal(true); }} className="text-xs px-3 py-2 rounded-full bg-[var(--panel-bg)] border border-[var(--glass-border)] text-[var(--apple-yellow)] flex items-center active:scale-95 transition-all">
+            <Sparkles className="w-3 h-3 mr-1" />
+            {apiConfig.key ? '大模型已连接' : '链接大模型'}
+          </button>
           <button onClick={() => fileInputRef.current.click()} className="text-xs px-3 py-2 rounded-full bg-[var(--panel-bg)] border border-[var(--glass-border)] text-[var(--apple-yellow)] flex items-center active:scale-95 transition-all">
             <Database className="w-3 h-3 mr-1" />
             {csvTemplate.headers.length > 0 ? '已连接' : '连接数据'}
@@ -579,7 +581,6 @@ export default function App() {
               {EVALUATION_STAGES.map((s, index) => (
                 <div key={s.id} className="w-full h-full flex-shrink-0 px-6 overflow-y-auto no-scrollbar">
                   
-                  {/* ====== 初始化模块，新增大模型接入按钮 ====== */}
                   {s.id === 'setup' && (
                     <div className="flex flex-col items-center justify-center h-[85%] space-y-5 w-full max-w-sm mx-auto">
                       <div className="w-24 h-24 rounded-3xl bg-[var(--panel-bg)] border border-[var(--glass-border)] flex items-center justify-center shadow-lg transition-colors">
@@ -603,7 +604,6 @@ export default function App() {
                         </div>
                       </div>
 
-                      {/* 大模型接入功能区 */}
                       <div className="w-full flex flex-col items-center">
                         <button 
                           onClick={fetchAIVehicleData} 
@@ -613,8 +613,8 @@ export default function App() {
                           {isFetchingAI ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
                           <span>{isFetchingAI ? '正在云端检索客观参数...' : '✨ 接入大模型获取客观参数'}</span>
                         </button>
-                        <div className="h-6 mt-2">
-                           {aiErrorMsg && <p className="text-xs text-red-500 font-medium animate-in fade-in">{aiErrorMsg}</p>}
+                        <div className="h-6 mt-2 text-center w-full px-2">
+                           {aiErrorMsg && <p className="text-xs text-red-500 font-medium animate-in fade-in leading-tight">{aiErrorMsg}</p>}
                            {(!aiErrorMsg && vehicleInfo.length) && <p className="text-xs text-[var(--apple-yellow)] font-medium animate-in fade-in">✅ 已填入车辆三围与硬件数据</p>}
                         </div>
                       </div>
@@ -878,7 +878,83 @@ export default function App() {
         )}
       </main>
 
-      {/* ======= 新增：AI 智能参数确认与编辑弹窗 ======= */}
+      {/* ======= API Key 配置弹窗 ======= */}
+      {showApiKeyModal && (
+        <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center p-0 sm:p-6 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
+           <div className="w-full max-h-[90vh] sm:h-auto sm:max-h-[85vh] max-w-md bg-[var(--bg-main)] rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-[var(--glass-border)] animate-in slide-in-from-bottom-10 sm:zoom-in-95">
+             <div className="px-6 py-4 border-b border-[var(--glass-border)] flex justify-between items-center bg-[var(--panel-bg)]">
+                <div>
+                  <h3 className="text-xl font-bold text-[var(--text-main)] flex items-center"><Key className="w-5 h-5 mr-2 text-[var(--apple-yellow)]"/> 配置通用大模型 API</h3>
+                </div>
+                <button onClick={() => setShowApiKeyModal(false)} className="w-8 h-8 rounded-full bg-[var(--track-bg)] flex items-center justify-center text-[var(--text-muted)] hover:text-white transition-colors">
+                  <X className="w-5 h-5" />
+                </button>
+             </div>
+             
+             <div className="p-6 space-y-4">
+               <p className="text-sm text-[var(--text-muted)]">
+                 支持任意兼容 OpenAI 通信协议的大模型（如 DeepSeek, Kimi, GPT 等）。您的配置将仅加密保存在本地。
+               </p>
+               
+               <div className="space-y-3">
+                 <div>
+                   <label className="text-xs text-[var(--text-muted)] mb-1 block">接口地址 (Base URL)</label>
+                   <input
+                     type="text"
+                     value={tempApiConfig.url}
+                     onChange={(e) => setTempApiConfig({...tempApiConfig, url: e.target.value})}
+                     placeholder="例如：https://api.deepseek.com/v1/chat/completions"
+                     className="w-full bg-[var(--track-bg)] text-[var(--text-main)] text-sm p-3 rounded-xl border border-[var(--glass-border)] focus:outline-none focus:border-[var(--apple-yellow)] transition-colors"
+                   />
+                 </div>
+                 
+                 <div>
+                   <label className="text-xs text-[var(--text-muted)] mb-1 block">模型名称 (Model Name)</label>
+                   <input
+                     type="text"
+                     value={tempApiConfig.model}
+                     onChange={(e) => setTempApiConfig({...tempApiConfig, model: e.target.value})}
+                     placeholder="例如：deepseek-chat"
+                     className="w-full bg-[var(--track-bg)] text-[var(--text-main)] text-sm p-3 rounded-xl border border-[var(--glass-border)] focus:outline-none focus:border-[var(--apple-yellow)] transition-colors"
+                   />
+                 </div>
+
+                 <div>
+                   <label className="text-xs text-[var(--text-muted)] mb-1 block">API 密钥 (API Key)</label>
+                   <input
+                     type="password"
+                     value={tempApiConfig.key}
+                     onChange={(e) => setTempApiConfig({...tempApiConfig, key: e.target.value})}
+                     placeholder="Bearer Token..."
+                     className="w-full bg-[var(--track-bg)] text-[var(--text-main)] text-sm p-3 rounded-xl border border-[var(--glass-border)] focus:outline-none focus:border-[var(--apple-yellow)] transition-colors"
+                   />
+                 </div>
+               </div>
+             </div>
+             
+             <div className="px-6 py-4 border-t border-[var(--glass-border)] bg-[var(--panel-bg)] flex justify-end space-x-3">
+               <button 
+                 onClick={() => setShowApiKeyModal(false)} 
+                 className="px-4 py-2 rounded-xl bg-[var(--track-bg)] text-[var(--text-main)] hover:bg-[var(--glass-border)] transition-colors"
+               >
+                 取消
+               </button>
+               <button 
+                 onClick={() => {
+                   setApiConfig(tempApiConfig);
+                   localStorage.setItem('llmApiConfig', JSON.stringify(tempApiConfig));
+                   setShowApiKeyModal(false);
+                 }} 
+                 className="px-6 py-2 rounded-xl bg-[var(--apple-yellow)] text-black font-bold flex items-center hover:brightness-110 active:scale-95 transition-all shadow-lg"
+               >
+                 保存配置
+               </button>
+             </div>
+           </div>
+        </div>
+      )}
+
+      {/* ======= AI 智能参数确认与编辑弹窗 ======= */}
       {showAIModal && (
         <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center p-0 sm:p-6 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
            <div className="w-full max-h-[90vh] sm:h-auto sm:max-h-[85vh] max-w-2xl bg-[var(--bg-main)] rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-[var(--glass-border)] animate-in slide-in-from-bottom-10 sm:zoom-in-95">
@@ -927,6 +1003,7 @@ export default function App() {
         </div>
       )}
 
+      {/* ======= 单车评语编辑弹窗 ======= */}
       {editingCarIndex !== null && (
         <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center p-0 sm:p-6 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
            <div className="w-full h-[90vh] sm:h-[85vh] max-w-3xl bg-[var(--bg-main)] rounded-t-3xl sm:rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-[var(--glass-border)] animate-in slide-in-from-bottom-10 sm:zoom-in-95">
