@@ -1,3 +1,6 @@
+import { parseCSV, serializeCSV, decodeCSV } from './lib/csv.js';
+import { normalizeScores, numberOrNull, recalculateRow } from './lib/scores.js';
+import { DEFAULT_API_CONFIG, normalizeApiConfig, requestChat, parseVehicleData } from './lib/llm.js';
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
   Mic, ChevronRight, ChevronLeft, Car, CheckCircle2, Activity, 
@@ -11,50 +14,50 @@ const EVALUATION_STAGES = [
   {
     id: 'static', title: '静态表现', icon: <Armchair className="w-6 h-6" />,
     items: [
-      { id: 'static_vision', label: '视野', leftAnchor: '压抑/盲区大', rightAnchor: '开阔无死角', csvKey: '静态-视野(1-5)' },
-      { id: 'static_ergonomics', label: '坐姿与人机', leftAnchor: '别扭/难适应', rightAnchor: '自然/贴合', csvKey: '静态-坐姿与人机(1-5)' },
-      { id: 'static_seat', label: '座椅舒适度', leftAnchor: '单薄/支撑差', rightAnchor: '包裹/支撑极佳', csvKey: '静态-座椅舒适度(1-5)' },
-      { id: 'static_nvh', label: '静止NVH', leftAnchor: '吵闹/震动大', rightAnchor: '如图书馆', csvKey: '静态-静止NVH(1-5)' }
+      { id: 'static_vision', label: '视野', leftAnchor: '压抑/盲区大', rightAnchor: '开阔无死角', csvKey: '静态-视野(0-100)' },
+      { id: 'static_ergonomics', label: '坐姿与人机', leftAnchor: '别扭/难适应', rightAnchor: '自然/贴合', csvKey: '静态-坐姿与人机(0-100)' },
+      { id: 'static_seat', label: '座椅舒适度', leftAnchor: '单薄/支撑差', rightAnchor: '包裹/支撑极佳', csvKey: '静态-座椅舒适度(0-100)' },
+      { id: 'static_nvh', label: '静止NVH', leftAnchor: '吵闹/震动大', rightAnchor: '如图书馆', csvKey: '静态-静止NVH(0-100)' }
     ],
     memoKey: '静态-主观评价'
   },
   {
     id: 'city', title: '城市工况', icon: <Activity className="w-6 h-6" />,
     items: [
-      { id: 'city_suspension', label: '悬挂舒适与过滤', leftAnchor: '生硬颠簸', rightAnchor: '如履平地', csvKey: '城市-悬挂舒适与过滤(1-5)' },
-      { id: 'city_brake', label: '刹车线性度', leftAnchor: '突兀/点头', rightAnchor: '极度跟脚', csvKey: '城市-刹车线性(1-5)' },
-      { id: 'city_steering', label: '方向轻重与回正', leftAnchor: '滞涩/死板', rightAnchor: '顺滑自然', csvKey: '城市-方向轻重与回正(1-5)' },
-      { id: 'city_throttle', label: '动力跟脚性', leftAnchor: '迟滞/窜车', rightAnchor: '随叫随到', csvKey: '城市-动力跟脚性(1-5)' }
+      { id: 'city_suspension', label: '悬挂舒适与过滤', leftAnchor: '生硬颠簸', rightAnchor: '如履平地', csvKey: '城市-悬挂舒适与过滤(0-100)' },
+      { id: 'city_brake', label: '刹车线性度', leftAnchor: '突兀/点头', rightAnchor: '极度跟脚', csvKey: '城市-刹车线性(0-100)' },
+      { id: 'city_steering', label: '方向轻重与回正', leftAnchor: '滞涩/死板', rightAnchor: '顺滑自然', csvKey: '城市-方向轻重与回正(0-100)' },
+      { id: 'city_throttle', label: '动力跟脚性', leftAnchor: '迟滞/窜车', rightAnchor: '随叫随到', csvKey: '城市-动力跟脚性(0-100)' }
     ],
     memoKey: '城市-主观评价'
   },
   {
     id: 'highway', title: '高速工况', icon: <Wind className="w-6 h-6" />,
     items: [
-      { id: 'hwy_stability', label: '直线稳定性', leftAnchor: '发飘/需微调', rightAnchor: '稳如高铁', csvKey: '高速-直线稳定性(1-5)' },
-      { id: 'hwy_handling', label: '变线支撑', leftAnchor: '侧倾大/拖沓', rightAnchor: '干脆利落', csvKey: '高速-变线支撑(1-5)' },
-      { id: 'hwy_nvh', label: 'NVH整体感受', leftAnchor: '吵闹刺耳', rightAnchor: '极度静谧', csvKey: '高速-NVH整体感受(1-5)' },
-      { id: 'hwy_brake', label: '制动稳定性', leftAnchor: '晃动/没信心', rightAnchor: '安稳扎实', csvKey: '高速-制动稳定性(1-5)' }
+      { id: 'hwy_stability', label: '直线稳定性', leftAnchor: '发飘/需微调', rightAnchor: '稳如高铁', csvKey: '高速-直线稳定性(0-100)' },
+      { id: 'hwy_handling', label: '变线支撑', leftAnchor: '侧倾大/拖沓', rightAnchor: '干脆利落', csvKey: '高速-变线支撑(0-100)' },
+      { id: 'hwy_nvh', label: 'NVH整体感受', leftAnchor: '吵闹刺耳', rightAnchor: '极度静谧', csvKey: '高速-NVH整体感受(0-100)' },
+      { id: 'hwy_brake', label: '制动稳定性', leftAnchor: '晃动/没信心', rightAnchor: '安稳扎实', csvKey: '高速-制动稳定性(0-100)' }
     ],
     memoKey: '高速-主观评价'
   },
   {
     id: 'powertrain', title: '动力总成', icon: <Zap className="w-6 h-6" />,
     items: [
-      { id: 'pt_response', label: '油门响应', leftAnchor: '迟钝/不听话', rightAnchor: '意图秒懂', csvKey: '动总-油门响应(1-5)' },
-      { id: 'pt_logic', label: '变速箱/电控逻辑', leftAnchor: '顿挫/傻等', rightAnchor: '丝滑聪明', csvKey: '动总-变速箱/电控逻辑(1-5)' },
-      { id: 'pt_smoothness', label: '动力平顺性', leftAnchor: '拉扯/突兀', rightAnchor: '如丝般顺滑', csvKey: '动总-动力平顺性(1-5)' },
-      { id: 'pt_sound', label: '声音品质', leftAnchor: '干瘪/嘈杂', rightAnchor: '浑厚/悦耳', csvKey: '动总-声音品质(1-5)' }
+      { id: 'pt_response', label: '油门响应', leftAnchor: '迟钝/不听话', rightAnchor: '意图秒懂', csvKey: '动总-油门响应(0-100)' },
+      { id: 'pt_logic', label: '变速箱/电控逻辑', leftAnchor: '顿挫/傻等', rightAnchor: '丝滑聪明', csvKey: '动总-变速箱/电控逻辑(0-100)' },
+      { id: 'pt_smoothness', label: '动力平顺性', leftAnchor: '拉扯/突兀', rightAnchor: '如丝般顺滑', csvKey: '动总-动力平顺性(0-100)' },
+      { id: 'pt_sound', label: '声音品质', leftAnchor: '干瘪/嘈杂', rightAnchor: '浑厚/悦耳', csvKey: '动总-声音品质(0-100)' }
     ],
     memoKey: '动总-主观评价'
   },
   {
     id: 'chassis', title: '底盘动态', icon: <Activity className="w-6 h-6" />,
     items: [
-      { id: 'chassis_balance', label: '前后悬平衡', leftAnchor: '严重脱节', rightAnchor: '浑然一体', csvKey: '底盘-前后悬平衡(1-5)' },
-      { id: 'chassis_roll', label: '侧倾控制', leftAnchor: '左摇右晃', rightAnchor: '稳如泰山', csvKey: '底盘-侧倾控制(1-5)' },
-      { id: 'chassis_rigidity', label: '车身整体感', leftAnchor: '松散异响', rightAnchor: '坚如磐石', csvKey: '底盘-车身整体感(1-5)' },
-      { id: 'chassis_precision', label: '转向指向感', leftAnchor: '模糊虚位', rightAnchor: '指哪打哪', csvKey: '底盘-转向指向感(1-5)' }
+      { id: 'chassis_balance', label: '前后悬平衡', leftAnchor: '严重脱节', rightAnchor: '浑然一体', csvKey: '底盘-前后悬平衡(0-100)' },
+      { id: 'chassis_roll', label: '侧倾控制', leftAnchor: '左摇右晃', rightAnchor: '稳如泰山', csvKey: '底盘-侧倾控制(0-100)' },
+      { id: 'chassis_rigidity', label: '车身整体感', leftAnchor: '松散异响', rightAnchor: '坚如磐石', csvKey: '底盘-车身整体感(0-100)' },
+      { id: 'chassis_precision', label: '转向指向感', leftAnchor: '模糊虚位', rightAnchor: '指哪打哪', csvKey: '底盘-转向指向感(0-100)' }
     ],
     memoKey: '底盘-主观评价'
   },
@@ -68,41 +71,11 @@ const SEGMENT_OPTIONS = [
 ];
 
 // --- 基础工具函数 ---
-const parseCSV = (str) => {
-  const rows = [];
-  let row = [];
-  let inQuotes = false;
-  let val = '';
-  for (let i = 0; i < str.length; i++) {
-    let char = str[i];
-    if (char === '"') { inQuotes = !inQuotes; } 
-    else if (char === ',' && !inQuotes) { row.push(val.trim()); val = ''; } 
-    else if ((char === '\n' || char === '\r') && !inQuotes) {
-      if (char === '\r' && str[i+1] === '\n') i++; 
-      row.push(val.trim());
-      if (row.some(v => v !== '')) rows.push(row); 
-      row = [];
-      val = '';
-    } 
-    else { val += char; }
-  }
-  if (val || row.length > 0) { row.push(val.trim()); rows.push(row); }
-  
-  if (rows.length < 2) return { headers: [], data: [] };
-  const headers = rows[0];
-  const data = rows.slice(1).map(r => {
-    const obj = {};
-    headers.forEach((h, i) => obj[h] = r[i] || '');
-    return obj;
-  });
-  return { headers, data };
-};
-
 const getRadarDataAverages = (scoresObj) => {
   const radarData = {};
   EVALUATION_STAGES.forEach(stage => {
     if (stage.items) {
-      const sum = stage.items.reduce((acc, item) => acc + (scoresObj[item.id] || 50), 0);
+      const sum = stage.items.reduce((acc, item) => acc + (scoresObj[item.id] ?? 50), 0);
       radarData[stage.title] = sum / stage.items.length;
     }
   });
@@ -116,9 +89,9 @@ const getRadarDataFromCSVRow = (row) => {
       let sum = 0;
       let validCount = 0;
       stage.items.forEach(item => {
-        let val = Number(row[item.csvKey]);
-        if (!isNaN(val) && val > 0) {
-          sum += (val - 1) * 25; 
+        const val = numberOrNull(row[item.csvKey]);
+        if (val !== null) {
+          sum += val;
           validCount++;
         }
       });
@@ -238,29 +211,53 @@ export default function App() {
   const [isDarkMode, setIsDarkMode] = useState(true);
   
   // 数据库状态
-  const [csvTemplate, setCsvTemplate] = useState({ raw: '', headers: [], data: [] });
+  const [csvTemplate, setCsvTemplate] = useState({ headers: [], data: [] });
   const fileInputRef = useRef(null);
+  const savedEntryIndex = useRef(null);
 
   // API 凭证状态 (使用 localStorage 本地保存，兼容通用大模型)
   const [apiConfig, setApiConfig] = useState(() => {
-    const stored = localStorage.getItem('llmApiConfig');
-    // 默认提供一个 OpenAI 格式的常见结构
-    return stored ? JSON.parse(stored) : { url: 'https://api.openai.com/v1/chat/completions', key: '', model: 'gpt-3.5-turbo' };
+    try {
+      const stored = localStorage.getItem('llmApiConfig');
+      return stored ? { ...DEFAULT_API_CONFIG, ...JSON.parse(stored) } : DEFAULT_API_CONFIG;
+    } catch { return DEFAULT_API_CONFIG; }
   });
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const [tempApiConfig, setTempApiConfig] = useState(apiConfig);
 
-  const handleFileUpload = (e) => {
+  const [fileError, setFileError] = useState('');
+  const [apiTestState, setApiTestState] = useState({ pending: false, message: '', success: false });
+  const [connectedConfig, setConnectedConfig] = useState('');
+  const configFingerprint = config => JSON.stringify(normalizeApiConfig(config));
+  const isConnected = (() => { try { return connectedConfig === configFingerprint(apiConfig); } catch { return false; } })();
+
+  const handleFileUpload = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const text = event.target.result;
-      const { headers, data } = parseCSV(text);
-      setCsvTemplate({ raw: text, headers, data });
+    setFileError('');
+    try {
+      const parsed = parseCSV(decodeCSV(await file.arrayBuffer()));
+      if (!parsed.headers.includes('车型')) throw new Error('未找到“车型”列，请导入 Car_Database 工作表另存的 CSV 文件。');
+      setCsvTemplate(normalizeScores(parsed));
+      savedEntryIndex.current = null;
+      setSelectedCars([]);
+      setIsComparing(false);
       if (navigator.vibrate) navigator.vibrate([20, 50, 20]);
-    };
-    reader.readAsText(file);
+    } catch (error) { setFileError(error.message); }
+    finally { e.target.value = ''; }
+  };
+
+  const testApiConnection = async () => {
+    setApiTestState({ pending: true, message: '正在测试…', success: false });
+    try {
+      const config = normalizeApiConfig(tempApiConfig);
+      await requestChat(config, '请只回复 JSON 对象 {"ok":true}。');
+      setConnectedConfig(configFingerprint(config));
+      setApiTestState({ pending: false, message: '连接成功，模型已返回响应。', success: true });
+    } catch (error) {
+      setConnectedConfig('');
+      setApiTestState({ pending: false, message: error.message, success: false });
+    }
   };
 
   // ----------------- 录入模块状态 -----------------
@@ -308,40 +305,15 @@ export default function App() {
 不要输出任何 Markdown 标记（如 \`\`\`json），只输出纯 JSON 字符串。`;
     
     try {
-      let response;
-      for (let attempt = 0; attempt < 3; attempt++) {
-        response = await fetch(apiConfig.url, {
-          method: "POST",
-          headers: { 
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${apiConfig.key}`
-          },
-          body: JSON.stringify({
-            model: apiConfig.model,
-            messages: [{ role: "user", content: prompt }],
-            temperature: 0.1
-          })
-        });
-        if (response.ok) break;
-        await new Promise(r => setTimeout(r, 1500));
-      }
-
-      if (!response || !response.ok) throw new Error("获取大模型数据失败，可能是API密钥/地址错误或超出配额。");
-      
-      const result = await response.json();
-      const rawText = result.choices?.[0]?.message?.content;
-      if (!rawText) throw new Error("大模型返回空数据");
-      
-      // 清理可能存在的 Markdown 格式
-      const parsed = JSON.parse(rawText.replace(/```json/g, '').replace(/```/g, '').trim());
+      const rawText = await requestChat(apiConfig, prompt);
+      setConnectedConfig(configFingerprint(apiConfig));
+      const parsed = parseVehicleData(rawText);
       setAiData(parsed);
       setShowAIModal(true);
       if (navigator.vibrate) navigator.vibrate([10, 30, 10, 30]);
 
     } catch (err) {
-      console.error(err);
-      setAiErrorMsg("AI获取失败，请检查API配置或网络连接。");
-      setTimeout(() => setAiErrorMsg(''), 3000);
+      setAiErrorMsg(err.message || 'AI 获取失败，请重试。');
     } finally {
       setIsFetchingAI(false);
     }
@@ -368,54 +340,39 @@ export default function App() {
     if (navigator.vibrate) navigator.vibrate([15, 30, 15]);
   };
 
-  const generateAndDownloadCSV = () => {
-    let outputCsv = "";
-    if (csvTemplate.headers.length === 0) {
-      const headers = ['厂牌', '年款', '车型', '级别', '车长(mm)', '车宽(mm)', '车高(mm)', '轴距(mm)', '整备质量(kg)', '电池容量(kWh)', 'CLTC续航', '发动机参数', '电机参数'];
-      const row = [ 
-        vehicleInfo.brand, vehicleInfo.year, vehicleInfo.model, vehicleInfo.segment,
-        vehicleInfo.length, vehicleInfo.width, vehicleInfo.height, vehicleInfo.wheelbase, vehicleInfo.weight,
-        vehicleInfo.battery, vehicleInfo.range, vehicleInfo.engine, vehicleInfo.motor
-      ];
-      
-      EVALUATION_STAGES.forEach(stage => {
-        if (stage.items) {
-          stage.items.forEach(item => { headers.push(item.csvKey); row.push((scores[item.id] / 25) + 1); });
-          headers.push(stage.memoKey); row.push(memos[stage.id] || '');
-        }
-      });
-      outputCsv = headers.join(',') + '\n' + row.join(',') + '\n';
-    } else {
-      const headers = csvTemplate.headers;
-      const newRow = new Array(headers.length).fill('');
-      const setVal = (h, v) => { const idx = headers.indexOf(h); if (idx !== -1) newRow[idx] = v; };
-      
-      setVal('厂牌', vehicleInfo.brand); setVal('年款', vehicleInfo.year); setVal('车型', vehicleInfo.model); setVal('级别', vehicleInfo.segment);
-      setVal('车长(mm)', vehicleInfo.length); setVal('车宽(mm)', vehicleInfo.width); setVal('车高(mm)', vehicleInfo.height); setVal('轴距(mm)', vehicleInfo.wheelbase);
-      setVal('整备质量(kg)', vehicleInfo.weight); setVal('电池容量(kWh)', vehicleInfo.battery); setVal('CLTC续航', vehicleInfo.range);
-      setVal('发动机参数', vehicleInfo.engine); setVal('电机参数', vehicleInfo.motor);
-      
-      EVALUATION_STAGES.forEach(stage => {
-        if (stage.items) {
-          let stageSum = 0;
-          stage.items.forEach(item => {
-            const score1to5 = (scores[item.id] / 25) + 1;
-            setVal(item.csvKey, score1to5);
-            stageSum += score1to5;
-          });
-          setVal(stage.memoKey, memos[stage.id] || '');
-          const summaryKey = stage.items[0].csvKey.split('-')[0] + '-综合评分(自动)';
-          setVal(summaryKey, (stageSum / stage.items.length).toFixed(2));
-        }
-      });
-      
-      outputCsv = csvTemplate.raw.trim() + '\n' + newRow.map(v => typeof v === 'string' && v.includes(',') ? `"${v}"` : v).join(',') + '\n';
-    }
-    const blob = new Blob([outputCsv], { type: 'text/csv;charset=utf-8;' });
+  const downloadDatabase = (database, filename) => {
+    const blob = new Blob([serializeCSV(database.headers, database.data)], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url; link.download = `${vehicleInfo.brand}_${vehicleInfo.model}_数据库更新.csv`;
-    document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    const link = document.createElement('a');
+    link.href = url; link.download = filename;
+    document.body.appendChild(link); link.click(); link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const generateAndDownloadCSV = () => {
+    const fields = {
+      '厂牌': vehicleInfo.brand, '年款': vehicleInfo.year, '车型': vehicleInfo.model, '级别': vehicleInfo.segment,
+      '车长(mm)': vehicleInfo.length, '车宽(mm)': vehicleInfo.width, '车高(mm)': vehicleInfo.height,
+      '轴距(mm)': vehicleInfo.wheelbase, '整备质量(kg)': vehicleInfo.weight, '电池容量(kWh)': vehicleInfo.battery,
+      'CLTC续航': vehicleInfo.range, '发动机参数': vehicleInfo.engine, '电机参数': vehicleInfo.motor,
+    };
+    EVALUATION_STAGES.forEach(stage => {
+      if (!stage.items) return;
+      stage.items.forEach(item => { fields[item.csvKey] = scores[item.id] ?? 50; });
+      fields[`${stage.items[0].csvKey.split('-')[0]}-综合评分(自动)`] = '';
+      fields[stage.memoKey] = memos[stage.id] || '';
+    });
+    const headers = csvTemplate.headers.length ? csvTemplate.headers : Object.keys(fields);
+    const row = recalculateRow(Object.fromEntries(headers.map(h => [h, fields[h] ?? ''])), headers);
+    // Export current edited rows, rather than the stale original CSV text.
+    const data = [...csvTemplate.data];
+    if (savedEntryIndex.current === null) {
+      savedEntryIndex.current = data.length;
+      data.push(row);
+    } else data[savedEntryIndex.current] = row;
+    const database = { headers, data };
+    downloadDatabase(database, `${vehicleInfo.brand}_${vehicleInfo.model}_数据库更新.csv`);
+    setCsvTemplate(database);
     if (navigator.vibrate) navigator.vibrate([30, 50, 30]);
   };
 
@@ -435,8 +392,8 @@ export default function App() {
       EVALUATION_STAGES.forEach(stage => {
         if (stage.items) {
           stage.items.forEach(item => {
-            const v = Number(row[item.csvKey]);
-            if (!isNaN(v) && v > 0) { totalScore += v; validItems++; }
+            const v = numberOrNull(row[item.csvKey]);
+            if (v !== null) { totalScore += v; validItems++; }
           });
         }
       });
@@ -518,7 +475,7 @@ export default function App() {
         .compare-table .sticky-left { position: sticky; left: 0; z-index: 10; background: var(--panel-bg); backdrop-filter: blur(20px); }
       `}} />
 
-      <header className="absolute top-0 w-full z-50 glass-panel border-b border-[var(--glass-border)] pt-12 pb-4 px-6 flex items-center justify-between">
+      <header className="absolute top-0 w-full z-50 glass-panel border-b border-[var(--glass-border)] pt-6 sm:pt-12 pb-4 px-4 sm:px-6 flex flex-wrap gap-3 items-center justify-between">
         <div className="flex items-center space-x-3">
           {appMode !== 'home' ? (
             <button onClick={() => { setAppMode('home'); setIsComparing(false); }} className="w-10 h-10 rounded-full bg-[var(--track-bg)] flex items-center justify-center hover:bg-[var(--glass-border)] transition-colors">
@@ -538,16 +495,17 @@ export default function App() {
             </h2>
           </div>
         </div>
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center gap-2 flex-wrap">
           {/* 新增：配置大模型 API Key 按钮 */}
-          <button onClick={() => { setTempApiConfig(apiConfig); setShowApiKeyModal(true); }} className="text-xs px-3 py-2 rounded-full bg-[var(--panel-bg)] border border-[var(--glass-border)] text-[var(--apple-yellow)] flex items-center active:scale-95 transition-all">
+          <button onClick={() => { setTempApiConfig(apiConfig); setApiTestState({ pending: false, message: '', success: false }); setShowApiKeyModal(true); }} className="text-xs px-3 py-2 rounded-full bg-[var(--panel-bg)] border border-[var(--glass-border)] text-[var(--apple-yellow)] flex items-center active:scale-95 transition-all">
             <Sparkles className="w-3 h-3 mr-1" />
-            {apiConfig.key ? '大模型已连接' : '链接大模型'}
+            {isConnected ? '大模型已连接' : apiConfig.key ? '已配置·未验证' : '链接大模型'}
           </button>
           <button onClick={() => fileInputRef.current.click()} className="text-xs px-3 py-2 rounded-full bg-[var(--panel-bg)] border border-[var(--glass-border)] text-[var(--apple-yellow)] flex items-center active:scale-95 transition-all">
             <Database className="w-3 h-3 mr-1" />
             {csvTemplate.headers.length > 0 ? '已连接' : '连接数据'}
           </button>
+          {csvTemplate.headers.length > 0 && <button onClick={() => downloadDatabase(csvTemplate, '车辆试驾数据库_百分制.csv')} className="text-xs px-3 py-2 rounded-full bg-[var(--panel-bg)] text-[var(--apple-yellow)]">导出数据库</button>}
           <input type="file" accept=".csv" ref={fileInputRef} className="hidden" onChange={handleFileUpload} />
           <button onClick={() => setIsDarkMode(!isDarkMode)} className="w-9 h-9 rounded-full bg-[var(--panel-bg)] border border-[var(--glass-border)] flex items-center justify-center transition-all active:scale-95">
             {isDarkMode ? <Sun className="w-4 h-4 text-[var(--apple-yellow)]" /> : <Moon className="w-4 h-4 text-[var(--text-main)]" />}
@@ -558,7 +516,7 @@ export default function App() {
       <main className="relative flex-1 w-full pt-32 h-full overflow-hidden flex flex-col">
         {appMode === 'home' && (
           <div className="flex flex-col items-center justify-center h-full px-6 space-y-6 animate-in fade-in zoom-in-95 duration-500 pb-20">
-            <button onClick={() => setAppMode('entry')} className="w-full max-w-sm p-8 rounded-[2rem] glass-panel border border-[var(--glass-border)] hover:bg-[var(--panel-bg)] transition-all active:scale-95 group text-left relative overflow-hidden">
+            <button onClick={() => { savedEntryIndex.current = null; setCurrentStep(0); setAppMode('entry'); }} className="w-full max-w-sm p-8 rounded-[2rem] glass-panel border border-[var(--glass-border)] hover:bg-[var(--panel-bg)] transition-all active:scale-95 group text-left relative overflow-hidden">
               <div className="w-14 h-14 rounded-2xl bg-[var(--apple-yellow)]/20 text-[var(--apple-yellow)] flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
                 <Plus className="w-7 h-7" />
               </div>
@@ -664,9 +622,9 @@ export default function App() {
             </div>
 
             <footer className="absolute bottom-0 w-full glass-panel border-t border-[var(--glass-border)] pb-10 pt-4 px-6 flex justify-between items-center z-50">
-              <button onClick={() => setCurrentStep(p => p - 1)} className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${currentStep === 0 ? 'opacity-30' : 'bg-[var(--track-bg)] active:scale-90'}`} disabled={currentStep === 0}><ChevronLeft className="w-7 h-7 text-[var(--text-main)]" /></button>
+              <button aria-label="上一步" onClick={() => setCurrentStep(p => p - 1)} className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${currentStep === 0 ? 'opacity-30' : 'bg-[var(--track-bg)] active:scale-90'}`} disabled={currentStep === 0}><ChevronLeft className="w-7 h-7 text-[var(--text-main)]" /></button>
               <div className="flex space-x-2">{EVALUATION_STAGES.map((_, i) => <div key={i} className={`h-2 rounded-full transition-all ${i === currentStep ? 'w-8 bg-[var(--apple-yellow)]' : 'w-2 bg-[var(--track-bg)]'}`} />)}</div>
-              <button onClick={() => setCurrentStep(p => p + 1)} className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${currentStep === EVALUATION_STAGES.length - 1 ? 'opacity-30' : 'bg-[var(--apple-yellow)] active:scale-90 shadow-lg'}`} disabled={currentStep === EVALUATION_STAGES.length - 1}><ChevronRight className="w-7 h-7 text-[#000000]" /></button>
+              <button aria-label="下一步" onClick={() => setCurrentStep(p => p + 1)} className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${currentStep === EVALUATION_STAGES.length - 1 ? 'opacity-30' : 'bg-[var(--apple-yellow)] active:scale-90 shadow-lg'}`} disabled={currentStep === EVALUATION_STAGES.length - 1}><ChevronRight className="w-7 h-7 text-[#000000]" /></button>
             </footer>
           </div>
         )}
@@ -719,8 +677,8 @@ export default function App() {
                       </thead>
                       <tbody>
                         {compareDimensions.map((dim, rowIdx) => {
-                          const scores = selectedCars.map(idx => Number(csvTemplate.data[idx][dim]) || 0);
-                          const maxScore = Math.max(...scores);
+                          const scores = selectedCars.map(idx => numberOrNull(csvTemplate.data[idx][dim]));
+                          const maxScore = Math.max(...scores.filter(score => score !== null));
                           const colorInfo = getDimColorInfo(dim);
                           
                           return (
@@ -732,13 +690,13 @@ export default function App() {
                                 </span>
                               </td>
                               {selectedCars.map(idx => {
-                                const val = Number(csvTemplate.data[idx][dim]) || 0;
-                                const isBest = val === maxScore && val > 0;
+                                const val = numberOrNull(csvTemplate.data[idx][dim]);
+                                const isBest = val !== null && val === maxScore;
                                 return (
                                   <td key={idx} className="text-center font-mono relative">
                                     <div className="absolute inset-0 z-0 pointer-events-none" style={{ backgroundColor: colorInfo.bg }}></div>
                                     <span className={`relative z-10 ${isBest ? 'text-[var(--apple-yellow)] font-bold text-lg bg-[var(--apple-yellow)]/10 px-2 py-1 rounded' : 'text-[var(--text-main)]'}`}>
-                                      {val || '-'}
+                                      {val ?? '-'}
                                     </span>
                                   </td>
                                 );
@@ -878,6 +836,7 @@ export default function App() {
         )}
       </main>
 
+      {fileError && <div role="alert" className="fixed bottom-4 left-4 right-4 z-[120] p-4 rounded-xl bg-red-950 text-white flex items-center gap-4"><span>{fileError}</span><button onClick={() => setFileError('')}>关闭</button></div>}
       {/* ======= API Key 配置弹窗 ======= */}
       {showApiKeyModal && (
         <div className="fixed inset-0 z-[100] flex items-end justify-center sm:items-center p-0 sm:p-6 bg-black/60 backdrop-blur-sm animate-in fade-in duration-300">
@@ -893,17 +852,17 @@ export default function App() {
              
              <div className="p-6 space-y-4">
                <p className="text-sm text-[var(--text-muted)]">
-                 支持任意兼容 OpenAI 通信协议的大模型（如 DeepSeek, Kimi, GPT 等）。您的配置将仅加密保存在本地。
+                 支持任意兼容 OpenAI 通信协议的大模型（如 DeepSeek, Kimi, GPT 等）。配置仅保存在当前浏览器本地；密钥会用于直接请求您填写的接口。
                </p>
                
                <div className="space-y-3">
                  <div>
-                   <label className="text-xs text-[var(--text-muted)] mb-1 block">接口地址 (Base URL)</label>
+                   <label className="text-xs text-[var(--text-muted)] mb-1 block">接口地址（基础地址或完整地址）</label>
                    <input
                      type="text"
-                     value={tempApiConfig.url}
-                     onChange={(e) => setTempApiConfig({...tempApiConfig, url: e.target.value})}
-                     placeholder="例如：https://api.deepseek.com/v1/chat/completions"
+                     disabled={apiTestState.pending} value={tempApiConfig.url}
+                     onChange={(e) => { setApiTestState({ pending: false, message: '', success: false }); setTempApiConfig({...tempApiConfig, url: e.target.value}); }}
+                     placeholder="例如：https://api.deepseek.com"
                      className="w-full bg-[var(--track-bg)] text-[var(--text-main)] text-sm p-3 rounded-xl border border-[var(--glass-border)] focus:outline-none focus:border-[var(--apple-yellow)] transition-colors"
                    />
                  </div>
@@ -912,9 +871,9 @@ export default function App() {
                    <label className="text-xs text-[var(--text-muted)] mb-1 block">模型名称 (Model Name)</label>
                    <input
                      type="text"
-                     value={tempApiConfig.model}
-                     onChange={(e) => setTempApiConfig({...tempApiConfig, model: e.target.value})}
-                     placeholder="例如：deepseek-chat"
+                     disabled={apiTestState.pending} value={tempApiConfig.model}
+                     onChange={(e) => { setApiTestState({ pending: false, message: '', success: false }); setTempApiConfig({...tempApiConfig, model: e.target.value}); }}
+                     placeholder="例如：deepseek-v4-flash"
                      className="w-full bg-[var(--track-bg)] text-[var(--text-main)] text-sm p-3 rounded-xl border border-[var(--glass-border)] focus:outline-none focus:border-[var(--apple-yellow)] transition-colors"
                    />
                  </div>
@@ -923,8 +882,8 @@ export default function App() {
                    <label className="text-xs text-[var(--text-muted)] mb-1 block">API 密钥 (API Key)</label>
                    <input
                      type="password"
-                     value={tempApiConfig.key}
-                     onChange={(e) => setTempApiConfig({...tempApiConfig, key: e.target.value})}
+                     disabled={apiTestState.pending} value={tempApiConfig.key}
+                     onChange={(e) => { setApiTestState({ pending: false, message: '', success: false }); setTempApiConfig({...tempApiConfig, key: e.target.value}); }}
                      placeholder="Bearer Token..."
                      className="w-full bg-[var(--track-bg)] text-[var(--text-main)] text-sm p-3 rounded-xl border border-[var(--glass-border)] focus:outline-none focus:border-[var(--apple-yellow)] transition-colors"
                    />
@@ -932,6 +891,12 @@ export default function App() {
                </div>
              </div>
              
+             <div className="px-6 pb-4 space-y-3">
+               <button disabled={apiTestState.pending} onClick={testApiConnection} className="px-4 py-2 rounded-xl bg-[var(--track-bg)] text-[var(--apple-yellow)] disabled:opacity-50">
+                 {apiTestState.pending ? '正在测试…' : '测试连接'}
+               </button>
+               {apiTestState.message && <p role="status" className={`text-sm break-words ${apiTestState.success ? 'text-green-500' : 'text-red-500'}`}>{apiTestState.message}</p>}
+             </div>
              <div className="px-6 py-4 border-t border-[var(--glass-border)] bg-[var(--panel-bg)] flex justify-end space-x-3">
                <button 
                  onClick={() => setShowApiKeyModal(false)} 
@@ -941,9 +906,12 @@ export default function App() {
                </button>
                <button 
                  onClick={() => {
-                   setApiConfig(tempApiConfig);
-                   localStorage.setItem('llmApiConfig', JSON.stringify(tempApiConfig));
-                   setShowApiKeyModal(false);
+                   try {
+                     const config = normalizeApiConfig(tempApiConfig);
+                     localStorage.setItem('llmApiConfig', JSON.stringify(config));
+                     setApiConfig(config);
+                     setShowApiKeyModal(false);
+                   } catch (error) { setApiTestState({ pending: false, success: false, message: error.message }); }
                  }} 
                  className="px-6 py-2 rounded-xl bg-[var(--apple-yellow)] text-black font-bold flex items-center hover:brightness-110 active:scale-95 transition-all shadow-lg"
                >
@@ -1026,10 +994,10 @@ export default function App() {
                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
                      {stage.items.map(item => (
                        <div key={item.id} className="flex flex-col">
-                         <label className="text-xs text-[var(--text-muted)] mb-1.5">{item.label} (1-5分)</label>
+                         <label className="text-xs text-[var(--text-muted)] mb-1.5">{item.label} (0-100分)</label>
                          <input 
-                           type="number" step="0.1" min="1" max="5" 
-                           value={editingData[item.csvKey] || ''} 
+                           type="number" step="1" min="0" max="100"
+                           value={editingData[item.csvKey] ?? ''}
                            onChange={(e) => setEditingData({...editingData, [item.csvKey]: e.target.value})} 
                            className="bg-[var(--track-bg)] text-[var(--text-main)] font-mono p-2.5 rounded-xl border border-[var(--glass-border)] focus:outline-none focus:border-[var(--apple-yellow)] transition-colors"
                          />
@@ -1052,7 +1020,12 @@ export default function App() {
                <button 
                  onClick={() => {
                    const newData = [...csvTemplate.data];
-                   newData[editingCarIndex] = editingData;
+                   const invalid = EVALUATION_STAGES.flatMap(stage => stage.items || []).some(item => {
+                     const value = editingData[item.csvKey];
+                     return value !== '' && value != null && (numberOrNull(value) === null || Number(value) < 0 || Number(value) > 100);
+                   });
+                   if (invalid) { setFileError('评分必须在 0–100 之间，请修改后再保存。'); return; }
+                   newData[editingCarIndex] = recalculateRow(editingData, csvTemplate.headers);
                    setCsvTemplate({...csvTemplate, data: newData});
                    setEditingCarIndex(null);
                  }} 
